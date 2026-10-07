@@ -1,0 +1,45 @@
+---
+description: NestJS feature module layout like auth — `<name>.module.ts`, controllers/, services/, dto/
+globs: "src/modules/**/*"
+alwaysApply: false
+---
+
+# NestJS feature module layout (`src/modules/<feature>/`)
+
+When adding a **new** feature module, mirror `src/modules/auth/` unless product says otherwise.
+
+## Required structure
+
+| Location | Purpose |
+|----------|---------|
+| `<feature>.module.ts` | Module root only here (e.g. `auth.module.ts`, `questions.module.ts`). Registers `imports`, `controllers`, `providers`, `exports`. |
+| `controllers/` | HTTP controllers only (`*.controller.ts`). No business logic beyond delegating to services. |
+| `services/` | Injectable domain services (`*.service.ts`). |
+| `dto/` | Request/response DTOs and validation classes (`*.dto.ts`). Group with section comments if the file grows (see `auth.dto.ts`). |
+
+## Module file conventions
+
+- Import controller from `./controllers/<feature>.controller`.
+- Import service from `./services/<feature>.service`.
+- Class name: `AuthModule`, `QuestionsModule` — `PascalCase` + `Module`.
+- Register the module in `app.module.ts` (or a parent module) under `imports`.
+
+## Optional (only when needed)
+
+Auth also uses `guards/`, `strategies/`, `utils/` beside the required folders. Add those **next to** `controllers/` / `services/` / `dto/` when the feature needs them; do **not** put guards or strategies inside `services/` or `dto/`.
+
+## Do not
+
+- Put controllers or services at the module root next to `*.module.ts`.
+- Put DTOs inside `services/` or `controllers/` (keep `dto/`).
+- Mix unrelated features in one module folder.
+
+## Example paths
+
+```text
+src/modules/questions/
+  questions.module.ts
+  controllers/questions.controller.ts
+  services/questions.service.ts
+  dto/create-question.dto.ts
+```

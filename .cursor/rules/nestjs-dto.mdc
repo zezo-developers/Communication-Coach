@@ -1,0 +1,62 @@
+---
+alwaysApply: true
+---
+# NestJS DTOs (`*.dto.ts`)
+
+Use this when adding or editing request/query/body DTO classes.
+
+## Imports
+
+- `@nestjs/swagger`: `ApiProperty`, `ApiPropertyOptional`, and `PartialType` when you need partial updates.
+- `class-transformer`: `Type` for query/params coerced to numbers.
+- `class-validator`: only what the class uses (`IsString`, `IsOptional`, `IsUUID`, `IsArray`, `IsInt`, `Min`, `Max`, `IsIn`, `ArrayMaxSize`, etc.).
+
+## Swagger (minimal but complete)
+
+- **Required body/fields**: `@ApiProperty({ description, example })` — `description` is user-facing; `example` matches real shape (string, number, UUID, short array).
+- **Optional fields**: `@ApiPropertyOptional({ description, example })` with the same care.
+- **Fixed sets** (sort order, status): add `enum: [...]` on the `@ApiPropertyOptional` (or `@ApiProperty`) so Swagger shows allowed values.
+- Do not duplicate long schema with extra `@ApiProperty` options unless the project already uses them (e.g. `minLength`); validation decorators are the source of truth for rules.
+
+## Validation decorators
+
+- Order: **Swagger first**, then **class-validator** (optional: `@IsOptional()` before other validators for optional properties).
+- **Always pass `{ message: '...' }`** on validators so API consumers get clear, field-specific errors (plain language, include the field name or constraint).
+- **Strings**: `@IsString({ message: '...' })`.
+- **UUIDs**: `@IsUUID('4', { message: '...' })`; for arrays `@IsUUID('4', { each: true, message: 'Each <field> must be a valid UUID' })`.
+- **Arrays**: `@IsArray`, `@ArrayMaxSize(n, { message: '...' })` to cap bulk payloads.
+- **Query pagination**: `@IsOptional()` → `@Type(() => Number)` → `@IsInt` → `@Min(1)` / `@Max(<sensibleCap>)` with messages; use **defaults** on the property (`page?: number = 1`, `limit?: number = 10`).
+- **Enums / literals**: `@IsIn(['A', 'B'], { message: '...' })` and type the property as a union if needed.
+
+## Class patterns
+
+- **Create** / **command** DTOs: required fields with `@ApiProperty`; optional with `@ApiPropertyOptional` + `@IsOptional()`.
+- **Update**: `export class UpdateFooDto extends PartialType(CreateFooDto) {}` when the update is a subset of create.
+- **Reuse**: `export class DeleteFooDto extends GetFooDto {}` (or a shared param DTO) when the shape is identical—avoid copy-paste.
+- One export per file is fine; group related DTOs in the same module file.
+
+## Example (shape only)
+
+```typescript
+export class ListItemsDto {
+  @ApiPropertyOptional({ description: 'Page number for pagination', example: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'Page must be a valid number' })
+  @Min(1, { message: 'Page must be at least 1' })
+  page?: number = 1;
+
+  @ApiPropertyOptional({
+    description: 'Sorting direction',
+    example: 'DESC',
+    enum: ['ASC', 'DESC'],
+  })
+  @IsOptional()
+  @IsIn(['ASC', 'DESC'], { message: 'sortOrder must be either ASC or DESC' })
+  sortOrder?: 'ASC' | 'DESC' = 'DESC';
+}
+```
+
+## App wiring (reminder)
+
+Ensure `ValidationPipe` uses `transform: true` (and typically `whitelist: true`) so `@Type()` and DTO instances work for query/body. Adjust UUID version (`'4'`) if the project uses another format.

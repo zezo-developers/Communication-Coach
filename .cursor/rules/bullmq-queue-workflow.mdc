@@ -1,0 +1,46 @@
+---
+description: How to add or extend BullMQ queues (constants, types, service, processor, module)
+globs: src/queues/**/*.ts
+alwaysApply: false
+---
+
+# BullMQ queue workflow
+
+When adding **a new job** or **a new queue**, follow this order. **First check** whether files for that queue **context** already exist (e.g. `email.queue.types.ts`, `email.queue.service.ts`, `email.processor.ts`). Reuse and extend them; only create new files when the queue context is new.
+
+## 1. Constants (`queue.constants.ts`)
+
+- **`QUEUE_NAMES`**: one key per registered Bull queue (string value = queue name passed to `BullModule.registerQueue` and `@Processor(...)`).
+- **`JOB_NAMES`**: nest job name strings **by queue** (e.g. `JOB_NAMES.EMAIL.SEND_WELCOME`). Every `queue.add(...)` must use a name from here—no magic strings in services/processors.
+- **`JOB_PRIORITIES`**: reuse for `priority` on `queue.add` when needed.
+
+## 2. Types (`src/queues/types/<context>.queue.types.ts`)
+
+- **One file per queue context** (e.g. `email.queue.types.ts`, `subject-material.queue.types.ts`).
+- Define **payload interfaces** for each job shape (`I...Payload`). Import DTOs from feature modules only when the payload truly needs them.
+
+## 3. Producer (`src/queues/services/<context>.queue.service.ts`)
+
+- Inject `@InjectQueue(QUEUE_NAMES.<CONTEXT>)` and call `this.<queue>.add(JOB_NAMES.<CONTEXT>.<JOB>, payload, options)` (e.g. `attempts`, `priority`).
+- **One service class per queue**; add **new methods** here for new jobs on that queue.
+
+## 4. Consumer (`src/queues/processors/<context>.processor.ts`)
+
+- `@Processor(QUEUE_NAMES.<CONTEXT>)` on a class extending `WorkerHost`.
+- In `process(job)`, **`switch (job.name)`** on `JOB_NAMES.<CONTEXT>.*` and delegate to private handlers. Throw on unknown `job.name`.
+- Type `job.data` with the matching payload interface from the types file.
+
+## 5. Module (`queues.module.ts`)
+
+- **`BullModule.registerQueue`**: include an entry for **every** `QUEUE_NAMES` value used.
+- **`providers`**: register the queue’s **service** + **processor**, plus any deps (e.g. mailer, repos).
+- **`exports`**: export queue services that other modules inject.
+
+## New queue vs new job on existing queue
+
+| Situation | Do |
+|-----------|-----|
+| **New job on existing queue** | Add `JOB_NAMES.<QUEUE>.<NEW_JOB>` → payload type → service method → `switch` case + handler in existing processor. |
+| **New queue (new context)** | Add `QUEUE_NAMES` + `JOB_NAMES.<NEW>` → new `types/<new>.queue.types.ts` → new service + new processor → wire in `queues.module.ts` (register queue, providers, exports). |
+
+Do not add job names only in the processor; **always** add them under `JOB_NAMES` first.

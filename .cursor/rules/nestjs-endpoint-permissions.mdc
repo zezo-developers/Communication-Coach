@@ -1,0 +1,55 @@
+---
+description: Wire JwtAuthGuard + PermissionsGuard + RequirePermissions; align with getUserPermissions in jwt.strategy (admin, scholar, user)
+globs: "**/*.controller.ts"
+alwaysApply: false
+---
+
+# Endpoint permissions (controllers)
+
+Use this when adding or changing **protected** routes that should enforce permission-based access (`Role` in `user.schema` is currently **admin**, **scholar**, **user**).
+
+## Source files (this repo)
+
+| Piece | Path |
+|--------|------|
+| JWT guard | `src/modules/auth/guards/jwt-auth.guard.ts` |
+| Permissions guard | `src/modules/auth/guards/permissions.guard.ts` |
+| JWT strategy + `getUserPermissions` | `src/modules/auth/strategies/jwt.strategy.ts` |
+| `RequirePermissions` (and `Roles`, `Public`, `AdminOnly`) | `src/common/decorators/roles.decorator.ts` |
+
+## Flow
+
+1. `JwtAuthGuard` authenticates the request and attaches `request.user` (shape from `JwtStrategy.validate()`; see `AuthenticatedUser` in `src/modules/auth/strategies/jwt.strategy.ts`).
+2. `validate()` sets `user.permissions` from **`JwtStrategy`’s private `getUserPermissions(user)`** — maps `user.role` (`admin` \| `scholar` \| `user`) to a `string[]` of permissions.
+3. `PermissionsGuard` reads `@RequirePermissions(...)` metadata and ensures the user has **every** required permission (AND). Wildcards on the user side are supported (e.g. `read:*` matches `read:foo`).
+
+## Controller wiring
+
+- **Guards**: `JwtAuthGuard` must run first (class or method), then `PermissionsGuard` on routes that need permission checks so `request.user` (and `permissions`) exist before `PermissionsGuard` runs.
+- **Decorator**: `@RequirePermissions('perm-a', 'perm-b')` — one or more permission strings in one decorator.
+- **Typical imports** (match existing controllers):
+
+```typescript
+import { JwtAuthGuard } from '@/modules/auth/guards/jwt-auth.guard';
+import { PermissionsGuard } from '@/modules/auth/guards/permissions.guard';
+import { RequirePermissions } from '@/common/decorators/roles.decorator';
+```
+
+If a route has **no** `@RequirePermissions`, `PermissionsGuard` allows access (only other guards apply).
+
+## Adding or reusing permissions
+
+1. **Search** `getUserPermissions` in `src/modules/auth/strategies/jwt.strategy.ts` for the permission string you need (e.g. `read:users`).
+2. **If it already exists** for every role that should access the endpoint: add only `@RequirePermissions(...)` on the handler (or class, if you standardize that). Do **not** duplicate strings in `getUserPermissions`.
+3. **If it is missing** for a role that must access the endpoint: add the string to the correct **`switch (user.role)`** branch — **`admin`**, **`scholar`**, and/or **`user`** — inside `getUserPermissions`. Keep naming consistent: prefer `action:resource` (e.g. `read:`, `create:`, `update:`, `delete:`, `manage:`).
+4. **Wildcards**: if you add e.g. `read:*` on `admin`, it can cover many `read:…` checks — add explicit strings when you need **non-read** actions or to grant a narrower role (`scholar` / `user`).
+
+## Role focus
+
+When updating `getUserPermissions`, only these **`user.role`** cases exist today: **`admin`**, **`scholar`**, **`user`** (see `Role` enum in `src/database/schemas/user.schema.ts`). Add a new `case` only if the product adds a new role.
+
+## Checklist for a new endpoint
+
+- [ ] Controller or handler uses `JwtAuthGuard` (and `PermissionsGuard` where permissions apply).
+- [ ] Handler has `@RequirePermissions(...)` with the correct permission string(s).
+- [ ] New permission strings are added to `getUserPermissions` for each role that should pass; existing strings are reused, not redefined.

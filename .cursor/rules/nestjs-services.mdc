@@ -1,0 +1,60 @@
+---
+alwaysApply: true
+---
+# NestJS services (`*.service.ts`)
+
+Use this structure when adding or editing injectable domain services.
+
+## Imports
+
+1. `@nestjs/common` — `Injectable` plus exceptions you throw (`BadRequestException`, `NotFoundException`, `ForbiddenException`, etc.).
+2. `@nestjs/typeorm` — `InjectRepository`.
+3. `typeorm` — `Repository`, `In`, and other query helpers you use.
+4. Entities, shared types (e.g. authenticated user), other module services, then feature DTOs from relative paths (`../dto/...`).
+
+## Class
+
+- Decorate with `@Injectable()`.
+- **Constructor**: inject `@InjectRepository(Entity)` repositories and other services. One dependency per line; keep `private readonly` naming `fooRepository` / `fooService`.
+
+## Private helpers (above public methods)
+
+- For non-trivial helpers, a one-line `//` comment above the method is recommended (what it returns / when it throws).
+
+- **`assert*` / `ensure*`**: resolve tenant or user context, load entities with **tenant/scope in `where`**, throw `NotFoundException` for missing resources and `BadRequestException` for invalid input or wrong scope. Return the loaded entity or id when useful.
+- **Normalization**: small `private` methods for trim/empty string rules; return `undefined` or sentinel values consistently.
+- **Uniqueness / validation**: use `createQueryBuilder` or `findOne` with minimal `select: ['id']` when existence checks should stay cheap.
+- Prefer **allowlists** for user-controlled `sortBy` / filter fields (`new Set([...])`, fallback to a safe default).
+
+Use section banners for long files:
+
+```typescript
+// ---------------------------
+// <DOMAIN> CRUD (or READ / WRITES)
+// ---------------------------
+```
+
+## Public methods
+
+- **One-line usage comment** — directly above each public method, a single `// …` line that describes what the method does, when to call it, and any important scope (tenant, user, role). Required for every new or changed public method.
+
+  ```typescript
+  // Loads a single resource by id after verifying the caller owns or may access it.
+  ```
+
+- **`async`**; name with a verb (`createX`, `getX`, `listX`, `updateX`, `deleteX`).
+- **First lines**: assert context (org/user) and load scoped entities via private helpers or inline `findOne` with scope in `where`.
+- **DTOs**: validate length/required fields after normalization; never trust raw query params for SQL fragments—only allowlisted column names in `orderBy`.
+- **TypeORM**:
+  - Use `relations` / `select` to avoid over-fetching.
+  - Lists: `createQueryBuilder`, `skip`/`take`, `getManyAndCount`; compute `totalPages`, `hasNextPage`, `nextPage`, `currentPage`, `totalCounts` (or match the project’s existing pagination DTO).
+  - Use `loadRelationCountAndMap` when you need counts without loading full collections.
+- **Returns**: return entities or plain objects; for deletes/updates optionally `{ message: '...' }` plus payload when the API already does so. Do not `console.log` in services.
+
+## Documentation
+
+- The **`//` one-liner** above each public method is the default documentation. Add JSDoc only when behavior is non-obvious (aggregations, cross-module side effects, invariants).
+
+## Cross-project note
+
+Adjust entity names, guard types, and exception messages to each app. The pattern is: **thin controller, fat service**, **scope every query**, **fail fast with HTTP exceptions**.
