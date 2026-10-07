@@ -1,0 +1,57 @@
+---
+alwaysApply: true
+---
+# NestJS controllers
+
+Use this layout whenever you add or edit a NestJS controller.
+
+## Imports (three blocks, blank lines between)
+
+1. `@nestjs/common` — only what the file uses (`Body`, `Controller`, `Delete`, `Get`, `Param`, `Patch`, `Post`, `Put`, `Query`, `UseGuards`, etc.).
+2. `@nestjs/swagger` — keep decorators minimal: `ApiBearerAuth`, `ApiBody`, `ApiOperation`, `ApiParam`, `ApiQuery`, `ApiTags`. Do not add `ApiResponse` / `ApiOkResponse` unless the project already standardizes on them.
+3. Shared app imports (guards, decorators, auth user type), then a blank line, then the feature `Service` and DTOs (relative paths like `../services/...`, `../dto/...`).
+
+## Class-level decorators (top of class, this order)
+
+- `@ApiTags('<Plural or domain name>')` — human-readable tag for Swagger.
+- `@Controller('<kebab-case-prefix>')` — no leading slash.
+- If routes require auth: `@UseGuards(JwtAuthGuard)` (or the project’s guard) then `@ApiBearerAuth('<name-matching-main.ts-bearer>')`.
+
+Inject one service in the constructor: `constructor(private readonly fooService: FooService) {}`.
+
+## Each handler
+
+1. **One-line usage comment** — directly above the method, a single `// …` line that states what the endpoint does and for whom (e.g. auth scope, role, or caller). This is required for every new or changed handler.
+
+   ```typescript
+   // Lists resources for the authenticated user with optional pagination and filters.
+   ```
+
+2. **JSDoc** (optional, for non-obvious handlers): short block only if you need more than the one-liner.
+
+3. **HTTP decorator** (`@Get()`, `@Post()`, …) with path segments in kebab-case when needed.
+4. **`@ApiOperation({ summary, description })`** — `summary` aligns with the one-line comment; `description` states behavior, scope, or side effects in plain language.
+5. **Params** — for every `@Param()`: `@ApiParam({ name, description, example })` with a realistic example (e.g. UUID string).
+6. **Query** — for list/filter endpoints: `@ApiQuery({ name, required: false, example })` per query key the DTO exposes (or document the DTO shape in `description` if many fields).
+7. **Body** — when `@Body()` is used: `@ApiBody({ type: SomeDto })`.
+8. **Method** — `async` name in camelCase; body delegates to the service and returns its result. No business logic in the controller. No `console.log` in controllers.
+
+## Routing order
+
+Declare static path segments before parameterized ones that could conflict (e.g. `@Get('stats')` before `@Get(':id')`). Put the collection `GET` (no extra segment) after more specific `@Get(':id/...')` routes when they share the same base path.
+
+## Example (shape only — adjust names/paths to the feature)
+
+```typescript
+// Returns a paginated, filterable list of resources for the current client.
+@Get()
+@ApiOperation({
+  summary: 'List Resources',
+  description: 'Paginated list scoped to the current user or tenant',
+})
+@ApiQuery({ name: 'page', required: false, example: 1 })
+@ApiQuery({ name: 'limit', required: false, example: 10 })
+async list(@Query() query: ListResourcesDto, @CurrentUser() user: AuthenticatedUser) {
+  return this.resourceService.list(query, user);
+}
+```
