@@ -54,7 +54,10 @@ export class Report {
   promptVersion?: string;
 
   @Prop()
-  generatedAt?: Date;
+  createdAt?: Date;
+
+  @Prop()
+  updatedAt?: Date;
 }
 
 export const ReportSchema = SchemaFactory.createForClass(Report);

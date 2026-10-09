@@ -9,6 +9,7 @@ import { AuthService } from './services/auth.service';
 import { OtpService } from './services/otp.service';
 import { AuthController } from './controllers/auth.controller';
 import { EmailModule } from 'src/modules/email/email.module';
+import { FileModule } from 'src/modules/file/file.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { EmailModule } from 'src/modules/email/email.module';
       { name: Otp.name, schema: OtpSchema },
     ]),
     EmailModule,
+    FileModule,
   ],
   controllers: [AuthController],
   providers: [

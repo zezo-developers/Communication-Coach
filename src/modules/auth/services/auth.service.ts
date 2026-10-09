@@ -1,4 +1,9 @@
-import { Injectable, BadRequestException, UnauthorizedException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  UnauthorizedException,
+  Logger,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -8,6 +13,7 @@ import { User, Role, UserStatus } from '@/database/schemas/user.schema';
 import { OtpType } from '@/database/schemas/otp.schema';
 import { OtpService } from './otp.service';
 import { EmailService } from 'src/modules/email/services/emails-service.service';
+import { S3Service } from 'src/modules/file/services/s3.service';
 import { RegisterDto } from '../dto/register.dto';
 import { LoginDto } from '../dto/login.dto';
 import { VerifyOtpDto } from '../dto/verify-otp.dto';
@@ -20,6 +26,9 @@ import { UpdateSelfDto } from '../dto/update-self.dto';
 const SALT_LENGTH = 32;
 const KEY_LENGTH = 64;
 const SCRYPT_OPTIONS = { N: 16384, r: 8, p: 1 };
+
+export const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
+export const AVATAR_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
 export interface TokenPair {
   accessToken: string;
@@ -37,6 +46,7 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly otpService: OtpService,
     private readonly emailService: EmailService,
+    private readonly s3Service: S3Service,
   ) {}
 
   // ─── Register ──────────────────────────────────────────────────────────────
@@ -45,15 +55,25 @@ export class AuthService {
     const { firstName, lastName, email, password } = dto;
 
     // Check if email already exists
-    const existing = await this.userModel.findOne({ email: email.toLowerCase() });
+    const existing = await this.userModel.findOne({
+      email: email.toLowerCase(),
+    });
     if (existing) {
       if (existing.emailVerified) {
-        throw new BadRequestException('An account with this email already exists');
+        throw new BadRequestException(
+          'An account with this email already exists',
+        );
       }
       // Resend OTP for unverified account
-      const otp = await this.otpService.generateOtp(email, OtpType.EMAIL_VERIFICATION);
+      const otp = await this.otpService.generateOtp(
+        email,
+        OtpType.EMAIL_VERIFICATION,
+      );
       await this.sendOtpEmail(email, otp, 'verify your email');
-      return { message: 'An OTP has been sent to your email for verification. Please verify to activate your account.' };
+      return {
+        message:
+          'An OTP has been sent to your email for verification. Please verify to activate your account.',
+      };
     }
 
     // Hash password using Node.js crypto (scrypt)
@@ -71,10 +91,16 @@ export class AuthService {
     });
 
     // Generate and send OTP
-    const otp = await this.otpService.generateOtp(email, OtpType.EMAIL_VERIFICATION);
+    const otp = await this.otpService.generateOtp(
+      email,
+      OtpType.EMAIL_VERIFICATION,
+    );
     await this.sendOtpEmail(email, otp, 'verify your email');
 
-    return { message: 'Registration successful. Please check your email for the OTP to verify your account.' };
+    return {
+      message:
+        'Registration successful. Please check your email for the OTP to verify your account.',
+    };
   }
 
   // ─── Verify Email ──────────────────────────────────────────────────────────
@@ -98,7 +124,9 @@ export class AuthService {
 
   // ─── Login ─────────────────────────────────────────────────────────────────
   // Authenticates user with email and password, returns JWT access + refresh tokens.
-  async login(dto: LoginDto): Promise<{ user: Partial<User>; tokens: TokenPair }> {
+  async login(
+    dto: LoginDto,
+  ): Promise<{ user: Partial<User>; tokens: TokenPair }> {
     const { email, password } = dto;
 
     // Fetch user with password field (excluded by default via `select: false`)
@@ -118,12 +146,16 @@ export class AuthService {
 
     // Check if email is verified
     if (!user.emailVerified) {
-      throw new UnauthorizedException('Email not verified. Please check your inbox for the OTP.');
+      throw new UnauthorizedException(
+        'Email not verified. Please check your inbox for the OTP.',
+      );
     }
 
     // Check if blocked
     if (user.isBlocked) {
-      throw new UnauthorizedException('Your account has been blocked. Please contact support.');
+      throw new UnauthorizedException(
+        'Your account has been blocked. Please contact support.',
+      );
     }
 
     // Generate tokens
@@ -158,7 +190,10 @@ export class AuthService {
   // ─── Logout ────────────────────────────────────────────────────────────────
   // Logs out the user by clearing the stored refresh token hash.
   async logout(userId: string): Promise<{ message: string }> {
-    await this.userModel.updateOne({ _id: userId }, { $unset: { refreshTokenHash: '' } });
+    await this.userModel.updateOne(
+      { _id: userId },
+      { $unset: { refreshTokenHash: '' } },
+    );
     return { message: 'Logged out successfully' };
   }
 
@@ -173,27 +208,88 @@ export class AuthService {
   }
 
   // ─── Update Self ───────────────────────────────────────────────────────────
-  // Updates the authenticated user's own profile (firstName, lastName).
-  async updateSelf(userId: string, dto: UpdateSelfDto): Promise<Partial<User>> {
-    const updateData: Record<string, string> = {};
-    if (dto.firstName !== undefined) updateData.firstName = dto.firstName;
-    if (dto.lastName !== undefined) updateData.lastName = dto.lastName;
-
-    if (Object.keys(updateData).length === 0) {
-      throw new BadRequestException('No fields to update');
-    }
-
-    const user = await this.userModel.findByIdAndUpdate(
-      userId,
-      { $set: updateData },
-      { new: true },
-    );
-
+  // Updates the authenticated user's own profile (firstName, lastName, avatar).
+  // A new avatar is uploaded first, so a failed upload leaves the existing
+  // profile untouched; the previous image is only deleted once the new URL has
+  // been persisted.
+  async updateSelf(
+    userId: string,
+    dto: UpdateSelfDto,
+    avatar?: Express.Multer.File,
+  ): Promise<Partial<User>> {
+    const user = await this.userModel.findById(userId);
     if (!user) {
       throw new BadRequestException('User not found');
     }
 
-    return this.sanitizeUser(user);
+    const hasProfileFields =
+      dto.firstName !== undefined || dto.lastName !== undefined;
+    if (!hasProfileFields && !avatar) {
+      throw new BadRequestException('No fields to update');
+    }
+
+    const updateData: Record<string, string> = {};
+    if (dto.firstName !== undefined) updateData.firstName = dto.firstName;
+    if (dto.lastName !== undefined) updateData.lastName = dto.lastName;
+
+    // Upload the new avatar before touching the database.
+    let uploadedAvatarKey: string | undefined;
+    if (avatar) {
+      this.assertValidAvatar(avatar);
+
+      const { storagePath, publicUrl } = await this.s3Service.uploadFile(
+        avatar.buffer,
+        {
+          filename: avatar.originalname,
+          mimeType: avatar.mimetype,
+          sizeBytes: avatar.size,
+          userId,
+          isPublic: true,
+        },
+      );
+
+      uploadedAvatarKey = storagePath;
+      updateData.avatarUrl =
+        publicUrl ?? this.s3Service.getPublicUrlForObjectKey(storagePath);
+    }
+
+    const previousAvatarUrl = user.avatarUrl;
+
+    const updated = await this.userModel
+      .findByIdAndUpdate(userId, { $set: updateData }, { new: true })
+      .catch(async (error) => {
+        // Never leave the freshly uploaded object orphaned if the write fails.
+        if (uploadedAvatarKey) {
+          await this.deleteStoredFile(
+            uploadedAvatarKey,
+            'newly uploaded avatar',
+          );
+        }
+        throw error;
+      });
+
+    if (!updated) {
+      if (uploadedAvatarKey) {
+        await this.deleteStoredFile(uploadedAvatarKey, 'newly uploaded avatar');
+      }
+      throw new BadRequestException('User not found');
+    }
+
+    // The new URL is durable now, so the replaced image can be removed.
+    if (uploadedAvatarKey && previousAvatarUrl) {
+      const previousKey =
+        this.s3Service.extractOwnedStoragePath(previousAvatarUrl);
+
+      if (previousKey) {
+        await this.deleteStoredFile(previousKey, 'previous avatar');
+      } else {
+        this.logger.warn(
+          `Left previous avatar untouched (not stored in our bucket): ${previousAvatarUrl}`,
+        );
+      }
+    }
+
+    return this.sanitizeUser(updated);
   }
 
   // ─── Forgot Password ───────────────────────────────────────────────────────
@@ -204,13 +300,22 @@ export class AuthService {
 
     // Don't reveal whether the email exists
     if (!user) {
-      return { message: 'If an account with this email exists, an OTP has been sent to reset your password.' };
+      return {
+        message:
+          'If an account with this email exists, an OTP has been sent to reset your password.',
+      };
     }
 
-    const otp = await this.otpService.generateOtp(email, OtpType.PASSWORD_RESET);
+    const otp = await this.otpService.generateOtp(
+      email,
+      OtpType.PASSWORD_RESET,
+    );
     await this.sendOtpEmail(email, otp, 'reset your password');
 
-    return { message: 'If an account with this email exists, an OTP has been sent to reset your password.' };
+    return {
+      message:
+        'If an account with this email exists, an OTP has been sent to reset your password.',
+    };
   }
 
   // ─── Reset Password ────────────────────────────────────────────────────────
@@ -226,7 +331,10 @@ export class AuthService {
       { $set: { password: hashedPassword } },
     );
 
-    return { message: 'Password has been reset successfully. You can now log in with your new password.' };
+    return {
+      message:
+        'Password has been reset successfully. You can now log in with your new password.',
+    };
   }
 
   // ─── JWT Token Generation ──────────────────────────────────────────────────
@@ -235,30 +343,29 @@ export class AuthService {
     const secret = this.configService.get<string>('jwt.secret')!;
     const refreshSecret = this.configService.get<string>('jwt.refreshSecret')!;
     const expiresIn = this.configService.get<string>('jwt.expiresIn')!;
-    const refreshExpiresIn = this.configService.get<string>('jwt.refreshExpiresIn')!;
+    const refreshExpiresIn = this.configService.get<string>(
+      'jwt.refreshExpiresIn',
+    )!;
 
     // Convert human-readable durations to numeric seconds for jsonwebtoken v9 compat
     const expiresInSeconds = this.parseExpiresIn(expiresIn);
     const refreshExpiresInSeconds = this.parseExpiresIn(refreshExpiresIn);
 
-    const accessToken = jwt.sign(
-      { sub: userId, email },
-      secret,
-      { expiresIn: expiresInSeconds },
-    );
+    const accessToken = jwt.sign({ sub: userId, email }, secret, {
+      expiresIn: expiresInSeconds,
+    });
 
-    const refreshToken = jwt.sign(
-      { sub: userId, email },
-      refreshSecret,
-      { expiresIn: refreshExpiresInSeconds },
-    );
+    const refreshToken = jwt.sign({ sub: userId, email }, refreshSecret, {
+      expiresIn: refreshExpiresInSeconds,
+    });
 
     return { accessToken, refreshToken, expiresIn: expiresInSeconds };
   }
 
   // ─── Password Hashing (Node.js crypto.scrypt) ──────────────────────────────
   // Hashes a password using scrypt with a random salt.
-  private async hashPassword(password: string): Promise<string> {
+  // eslint-disable-next-line @typescript-eslint/require-await
+  private async hashPassword(password: string) {
     const salt = randomBytes(SALT_LENGTH);
     const hash = scryptSync(password, salt, KEY_LENGTH, SCRYPT_OPTIONS);
     return `${salt.toString('base64')}:${hash.toString('base64')}`;
@@ -266,7 +373,11 @@ export class AuthService {
 
   // ─── Password Verification ─────────────────────────────────────────────────
   // Compares a password against a stored hash using constant-time comparison.
-  private async comparePassword(password: string, hashed: string): Promise<boolean> {
+  // eslint-disable-next-line @typescript-eslint/require-await
+  private async comparePassword(
+    password: string,
+    hashed: string,
+  ): Promise<boolean> {
     const [saltB64, hashB64] = hashed.split(':');
     const salt = Buffer.from(saltB64, 'base64');
     const hash = Buffer.from(hashB64, 'base64');
@@ -285,17 +396,26 @@ export class AuthService {
     const value = parseInt(match[1], 10);
     const unit = match[2];
     switch (unit) {
-      case 's': return value;
-      case 'm': return value * 60;
-      case 'h': return value * 3600;
-      case 'd': return value * 86400;
-      default: return 3600;
+      case 's':
+        return value;
+      case 'm':
+        return value * 60;
+      case 'h':
+        return value * 3600;
+      case 'd':
+        return value * 86400;
+      default:
+        return 3600;
     }
   }
 
   // ─── Send OTP Email ────────────────────────────────────────────────────────
   // Sends an OTP email via the EmailService.
-  private async sendOtpEmail(email: string, otp: string, purpose: string): Promise<void> {
+  private async sendOtpEmail(
+    email: string,
+    otp: string,
+    purpose: string,
+  ): Promise<void> {
     try {
       await this.emailService.sendEmail({
         to: email,
@@ -313,6 +433,43 @@ export class AuthService {
     } catch (error) {
       this.logger.error(`Failed to send OTP email to ${email}: ${error}`);
       // Don't throw — the OTP is stored and can be retried
+    }
+  }
+
+  // ─── Avatar Validation ─────────────────────────────────────────────────────
+  // Guards the upload independently of the controller, so the service stays
+  // safe for any other caller.
+  private assertValidAvatar(avatar: Express.Multer.File): void {
+    if (!avatar.buffer?.length) {
+      throw new BadRequestException('Avatar file is empty');
+    }
+
+    if (!AVATAR_MIME_TYPES.includes(avatar.mimetype)) {
+      throw new BadRequestException(
+        `Avatar must be one of: ${AVATAR_MIME_TYPES.join(', ')}`,
+      );
+    }
+
+    if (avatar.size > AVATAR_MAX_BYTES) {
+      throw new BadRequestException(
+        `Avatar must not exceed ${AVATAR_MAX_BYTES / (1024 * 1024)} MB`,
+      );
+    }
+  }
+
+  // ─── Storage Cleanup ───────────────────────────────────────────────────────
+  // Best-effort delete: a failure here leaves an orphaned object, which is not
+  // worth failing a profile update that has already been persisted.
+  private async deleteStoredFile(
+    storageKey: string,
+    label: string,
+  ): Promise<void> {
+    try {
+      await this.s3Service.deleteFile(storageKey);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to delete ${label} from storage (${storageKey}): ${error}`,
+      );
     }
   }
 

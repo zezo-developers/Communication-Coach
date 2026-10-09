@@ -79,7 +79,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
    */
   private getUserPermissions(user: User): string[] {
     // This will be expanded when we implement the full RBAC system
-    const basePermissions = ['read:profile', 'update:profile', 'read:organization-analyses'];
+    const basePermissions = [
+      'read:profile',
+      'update:profile',
+      'read:organization-analyses',
+      'read:roleplay',
+    ];
     // Add role-based permissions (simplified for now)
     switch (user.role) {
       case 'admin':
@@ -89,6 +94,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           'update:users',
           'delete:users',
           'block:users',
+          'create:roleplay',
+          'update:roleplay',
+          'delete:roleplay',
         ];
       case 'user':
         return [

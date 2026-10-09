@@ -10,6 +10,8 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { AuthModule } from './modules/auth/auth.module';
+import { RoleplayModule } from './modules/roleplay/roleplay.module';
+import { FileModule } from './modules/file/file.module';
 
 @Module({
   imports: [
@@ -49,6 +51,10 @@ import { AuthModule } from './modules/auth/auth.module';
 
     // ─── Auth Module ─────────────────────────────────────────────────────────
     AuthModule,
+
+    RoleplayModule,
+
+    FileModule,
   ],
   controllers: [AppController],
   providers: [AppService],

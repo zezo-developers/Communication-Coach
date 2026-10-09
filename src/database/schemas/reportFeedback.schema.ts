@@ -104,6 +104,12 @@ export class ReportFeedback {
     required: true,
   })
   conciseness!: FeedbackScore;
+
+  @Prop()
+  createdAt?: Date;
+
+  @Prop()
+  updatedAt?: Date;
 }
 
 export const ReportFeedbackSchema =

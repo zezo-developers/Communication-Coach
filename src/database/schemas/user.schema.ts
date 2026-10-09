@@ -28,6 +28,9 @@ export class User extends Document {
   @Prop({ required: true, select: false })
   password!: string;
 
+  @Prop({ required: false })
+  avatarUrl?: string;
+
   // ===== Role & Status =====
   @Prop({ enum: Role, default: Role.USER })
   role!: Role;

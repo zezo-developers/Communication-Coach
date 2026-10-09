@@ -15,4 +15,15 @@ export class UpdateSelfDto {
   @MinLength(1, { message: 'Last name must be at least 1 character long' })
   @MaxLength(50, { message: 'Last name must not exceed 50 characters' })
   lastName?: string;
+
+  // The file itself arrives on `request.file` (see `@UploadedFile()` in the
+  // controller); it is declared here so Swagger renders the multipart field.
+  @ApiPropertyOptional({
+    type: 'string',
+    format: 'binary',
+    description:
+      'Avatar image (JPEG, PNG or WebP, max 5 MB). Send as multipart/form-data. Replaces the existing avatar, which is deleted from storage.',
+  })
+  @IsOptional()
+  avatar?: Express.Multer.File;
 }

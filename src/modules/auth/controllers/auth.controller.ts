@@ -1,9 +1,25 @@
 import {
-  Controller, Post, Get, Patch, Body, UseGuards, Req,
+  Controller,
+  Post,
+  Get,
+  Patch,
+  Body,
+  UseGuards,
+  Req,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
-import { AuthService } from '../services/auth.service';
+import { AVATAR_MAX_BYTES, AuthService } from '../services/auth.service';
 import { RegisterDto } from '../dto/register.dto';
 import { LoginDto } from '../dto/login.dto';
 import { VerifyOtpDto } from '../dto/verify-otp.dto';
@@ -101,19 +117,30 @@ export class AuthController {
   }
 
   // ─── Update Self ───────────────────────────────────────────────────────────
-  // Updates the authenticated user's own profile (firstName, lastName).
+  // Updates the authenticated user's own profile (firstName, lastName, avatar).
   @Patch('update-self')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
+  @ApiConsumes('multipart/form-data', 'application/json')
   @ApiOperation({
     summary: 'Update own profile',
     description:
-      'Updates the authenticated user\'s own profile fields (firstName, lastName). Only provided fields are updated.',
+      "Updates the authenticated user's own profile fields (firstName, lastName, avatar). Only provided fields are updated. Send as multipart/form-data to attach an avatar; the previous avatar is deleted from storage once the new one is saved.",
   })
   @ApiBody({ type: UpdateSelfDto })
-  async updateSelf(@Req() req: any, @Body() dto: UpdateSelfDto) {
+  @UseInterceptors(
+    FileInterceptor('avatar', {
+      storage: memoryStorage(),
+      limits: { fileSize: AVATAR_MAX_BYTES, files: 1 },
+    }),
+  )
+  async updateSelf(
+    @Req() req: any,
+    @Body() dto: UpdateSelfDto,
+    @UploadedFile() avatar?: Express.Multer.File,
+  ) {
     const user: AuthenticatedUser = req.user;
-    return this.authService.updateSelf(user.sub, dto);
+    return this.authService.updateSelf(user.sub, dto, avatar);
   }
 
   // ─── Forgot Password ───────────────────────────────────────────────────────
@@ -122,7 +149,7 @@ export class AuthController {
   @ApiOperation({
     summary: 'Send password reset OTP',
     description:
-      'Sends a 6-digit OTP to the user\'s email for password reset. If the email is not registered, the response is the same (to avoid email enumeration).',
+      "Sends a 6-digit OTP to the user's email for password reset. If the email is not registered, the response is the same (to avoid email enumeration).",
   })
   @ApiBody({ type: ForgotPasswordDto })
   async forgotPassword(@Body() dto: ForgotPasswordDto) {

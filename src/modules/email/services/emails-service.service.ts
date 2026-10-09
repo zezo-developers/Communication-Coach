@@ -33,7 +33,7 @@ export class EmailService {
       const { to, subject, html, text } = options;
 
       const result = await this.transporter.sendMail({
-        from: `"Sunni Tabligi Mission" <${this.configService.get('FROM_EMAIL')}>`,
+        from: `"Communication Coach" <${this.configService.get('FROM_EMAIL')}>`,
         to,
         subject,
         html,
