@@ -7,13 +7,18 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import {
   ApiBearerAuth,
   ApiBody,
+  ApiConsumes,
   ApiOperation,
   ApiParam,
   ApiQuery,
@@ -24,7 +29,10 @@ import { JwtAuthGuard } from 'src/modules/auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from 'src/modules/auth/guards/permissions.guard';
 import { RolePlayDifficulty } from '@/database/schemas/rolePlay.schema';
 
-import { RoleplayService } from '../services/roleplay.service.service';
+import {
+  ROLEPLAY_AVATAR_MAX_BYTES,
+  RoleplayService,
+} from '../services/roleplay.service.service';
 import { CreateRolePlayDto } from '../dto/create-roleplay.dto';
 import { UpdateRolePlayDto } from '../dto/update-roleplay.dto';
 import {
@@ -42,6 +50,33 @@ import {
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 export class RoleplayController {
   constructor(private readonly roleplayService: RoleplayService) {}
+
+  private normalizeAiPersonaInput<T extends Record<string, any>>(dto: T): T {
+    const entries = Object.entries(dto ?? {}).filter(([key]) =>
+      key.startsWith('aiPersona['),
+    );
+
+    if (!entries.length) {
+      return dto;
+    }
+
+    const mergedAiPersona =
+      dto.aiPersona && typeof dto.aiPersona === 'object' && !Array.isArray(dto.aiPersona)
+        ? { ...dto.aiPersona }
+        : {};
+
+    for (const [key, value] of entries) {
+      const match = key.match(/^aiPersona\[(.+)\]$/);
+      if (match) {
+        mergedAiPersona[match[1]] = value;
+      }
+    }
+
+    return {
+      ...dto,
+      aiPersona: mergedAiPersona,
+    };
+  }
 
   // Lists roleplay scenarios with pagination, search and filters for any authenticated user.
   @Get()
@@ -112,24 +147,37 @@ export class RoleplayController {
   @Post()
   @UseGuards(PermissionsGuard)
   @RequirePermissions('create:roleplay')
+  @ApiConsumes('multipart/form-data', 'application/json')
   @ApiOperation({
     summary: 'Create a roleplay scenario',
     description:
-      'Creates a new roleplay scenario with its AI persona, system prompt and objectives. Requires the create:roleplay permission (admin only).',
+      'Creates a new roleplay scenario with its AI persona, system prompt and objectives. Supports an optional avatar upload for the persona. Requires the create:roleplay permission (admin only).',
   })
   @ApiBody({ type: CreateRolePlayDto })
-  async create(@Body() dto: CreateRolePlayDto) {
-    return this.roleplayService.create(dto);
+  @UseInterceptors(
+    FileInterceptor('avatar', {
+      storage: memoryStorage(),
+      limits: { fileSize: ROLEPLAY_AVATAR_MAX_BYTES, files: 1 },
+    }),
+  )
+  async create(
+    @Body() dto: CreateRolePlayDto,
+    @UploadedFile() avatar?: Express.Multer.File,
+  ) {
+    console.log('Received create roleplay request with DTO:', dto);
+    const normalizedDto = this.normalizeAiPersonaInput(dto as Record<string, any>) as CreateRolePlayDto;
+    return this.roleplayService.create(normalizedDto, avatar);
   }
 
   // Applies a partial update to a roleplay scenario; restricted to admins.
   @Patch(':id')
   @UseGuards(PermissionsGuard)
   @RequirePermissions('update:roleplay')
+  @ApiConsumes('multipart/form-data', 'application/json')
   @ApiOperation({
     summary: 'Update a roleplay scenario',
     description:
-      'Updates only the provided fields of a roleplay scenario. The AI persona is merged, so omitted persona fields keep their stored values. Requires the update:roleplay permission (admin only).',
+      'Updates only the provided fields of a roleplay scenario. The AI persona is merged, so omitted persona fields keep their stored values. Supports an optional avatar replacement for the persona. Requires the update:roleplay permission (admin only).',
   })
   @ApiParam({
     name: 'id',
@@ -137,8 +185,19 @@ export class RoleplayController {
     example: '65f1c2a4b3d4e5f6a7b8c9d0',
   })
   @ApiBody({ type: UpdateRolePlayDto })
-  async update(@Param('id') id: string, @Body() dto: UpdateRolePlayDto) {
-    return this.roleplayService.update(id, dto);
+  @UseInterceptors(
+    FileInterceptor('avatar', {
+      storage: memoryStorage(),
+      limits: { fileSize: ROLEPLAY_AVATAR_MAX_BYTES, files: 1 },
+    }),
+  )
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateRolePlayDto,
+    @UploadedFile() avatar?: Express.Multer.File,
+  ) {
+    const normalizedDto = this.normalizeAiPersonaInput(dto as Record<string, any>) as UpdateRolePlayDto;
+    return this.roleplayService.update(id, normalizedDto, avatar);
   }
 
   // Deactivates a roleplay scenario (soft delete); restricted to admins.

@@ -1,5 +1,15 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { Transform } from 'class-transformer';
+import {
+  IsIn,
+  IsObject,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
+
+export const ROLEPLAY_PERSONA_GENDERS = ['male', 'female', 'neutral'] as const;
 
 /**
  * The AI persona the learner talks to. Reused by the create and update DTOs so
@@ -32,6 +42,46 @@ export class CreateRolePlayPersonaDto {
   @IsString({ message: 'Personality must be a valid string' })
   @MaxLength(1000, { message: 'Personality must not exceed 1000 characters' })
   personality?: string;
+
+  @ApiPropertyOptional({
+    description: 'Voice gender style for the persona when generating spoken output.',
+    enum: ROLEPLAY_PERSONA_GENDERS,
+    example: 'male',
+  })
+  @IsOptional()
+  @IsIn(ROLEPLAY_PERSONA_GENDERS, {
+    message: `Gender must be one of: ${ROLEPLAY_PERSONA_GENDERS.join(', ')}`,
+  })
+  gender?: (typeof ROLEPLAY_PERSONA_GENDERS)[number];
+
+  @ApiPropertyOptional({
+    description:
+      'OpenAI TTS configuration object. Example: { voice: "nova", language: "en-US", style: "friendly" }',
+    example: { voice: 'nova', language: 'en-US', style: 'friendly' },
+    additionalProperties: true,
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  })
+  @IsObject({ message: 'voiceConfig must be a valid object' })
+  voiceConfig?: Record<string, any>;
+
+  @ApiPropertyOptional({
+    description:
+      'Avatar image URL for the persona. Usually set by the server after a file upload.',
+    example: 'https://cdn.example.com/roleplay/avatars/alex.png',
+  })
+  @IsOptional()
+  @IsString({ message: 'Avatar URL must be a valid string' })
+  avatarUrl?: string;
 }
 
 export class UpdateRolePlayPersonaDto extends PartialType(

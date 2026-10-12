@@ -12,6 +12,7 @@ import { ConfigService } from '@nestjs/config';
 import { AuthModule } from './modules/auth/auth.module';
 import { RoleplayModule } from './modules/roleplay/roleplay.module';
 import { FileModule } from './modules/file/file.module';
+import { RecordingModule } from './modules/recording/recording.module';
 
 @Module({
   imports: [
@@ -55,6 +56,8 @@ import { FileModule } from './modules/file/file.module';
     RoleplayModule,
 
     FileModule,
+
+    RecordingModule,
   ],
   controllers: [AppController],
   providers: [AppService],

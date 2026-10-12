@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { plainToInstance, Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
@@ -74,15 +74,101 @@ export class CreateRolePlayDto {
   @ApiProperty({
     description: 'The persona the AI plays during the session',
     type: CreateRolePlayPersonaDto,
+    example: {
+      name: 'Alex Morgan',
+      role: 'Hiring manager running a screening call',
+      personality: 'Direct but fair, asks follow-up questions',
+      gender: 'male',
+      voiceConfig: {
+        voice: 'nova',
+        language: 'en-US',
+        style: 'friendly',
+      },
+    },
   })
-  @ValidateNested({ message: 'aiPersona must be a valid persona object' })
-  @Type(() => CreateRolePlayPersonaDto)
+  @Transform(
+    ({ value }) => {
+      if (typeof value !== 'string') {
+        return value;
+      }
+
+      try {
+        const parsed = JSON.parse(value);
+
+        if (
+          parsed === null ||
+          typeof parsed !== 'object' ||
+          Array.isArray(parsed)
+        ) {
+          return value;
+        }
+
+        return plainToInstance(CreateRolePlayPersonaDto, parsed);
+      } catch {
+        return value;
+      }
+    },
+    { toClassOnly: true },
+  )
+  @ValidateNested()
   aiPersona!: CreateRolePlayPersonaDto;
+
+  @ApiPropertyOptional({
+    description: 'Optional avatar image for the persona',
+    type: 'string',
+    format: 'binary',
+  })
+  avatar?: Express.Multer.File;
 
   @ApiPropertyOptional({
     description: 'Learning objectives the session should cover',
     example: ['Anchor on data', 'Handle an outright refusal'],
     type: [String],
+  })
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') {
+      return undefined;
+    }
+
+    const normalizeList = (items: unknown): string[] =>
+      (Array.isArray(items) ? items : [items])
+        .filter((item) => item !== undefined && item !== null && item !== '')
+        .map((item) =>
+          typeof item === 'string' ? item.trim() : String(item).trim(),
+        )
+        .filter((item) => item.length > 0);
+
+    if (Array.isArray(value)) {
+      return normalizeList(value);
+    }
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return undefined;
+      }
+
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return normalizeList(parsed);
+        }
+      } catch {
+        // fall through to comma-separated/single-value handling below
+      }
+
+      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+        return normalizeList(trimmed.slice(1, -1).split(','));
+      }
+
+      if (trimmed.includes(',')) {
+        return normalizeList(trimmed.split(','));
+      }
+
+      return [trimmed];
+    }
+
+    return normalizeList(value);
   })
   @IsOptional()
   @IsArray({ message: 'Objectives must be an array of strings' })
@@ -96,6 +182,11 @@ export class CreateRolePlayDto {
     description: 'Whether the scenario is available to learners',
     example: true,
     default: true,
+  })
+  @Transform(({ value }) => {
+    if (value === true || value === 'true') return true;
+    if (value === false || value === 'false') return false;
+    return value;
   })
   @IsOptional()
   @IsBoolean({ message: 'isActive must be a boolean value' })

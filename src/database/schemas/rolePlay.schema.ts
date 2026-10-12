@@ -19,6 +19,19 @@ export class RolePlayPersona {
 
   @Prop()
   personality?: string;
+
+  // Optional avatar URL for this persona
+  @Prop()
+  avatarUrl?: string;
+
+  // Persona gender - used to pick voice style when speaking
+  @Prop({ enum: ['male', 'female', 'neutral'], default: 'neutral' })
+  gender?: 'male' | 'female' | 'neutral';
+
+  // OpenAI / TTS voice configuration - optional JSON stored as an object.
+  // Example: { voice: 'alloy', language: 'en-US', style: 'conversational' }
+  @Prop({ type: Object })
+  voiceConfig?: Record<string, any>;
 }
 
 const RolePlayPersonaSchema = SchemaFactory.createForClass(RolePlayPersona);

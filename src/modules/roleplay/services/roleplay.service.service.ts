@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, UpdateQuery, isValidObjectId } from 'mongoose';
+import { S3Service } from 'src/modules/file/services/s3.service';
 import {
   RolePlay,
   RolePlayDifficulty,
@@ -27,6 +28,13 @@ import {
   ROLEPLAY_DEFAULT_SORT_FIELD,
   ROLEPLAY_SORT_FIELDS,
 } from '../dto/query-roleplay.dto';
+
+export const ROLEPLAY_AVATAR_MAX_BYTES = 5 * 1024 * 1024;
+export const ROLEPLAY_AVATAR_MIME_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+];
 
 /**
  * The subset of Mongo filters this service builds. Declared locally so the
@@ -52,6 +60,7 @@ export class RoleplayService {
   constructor(
     @InjectModel(RolePlay.name)
     private readonly rolePlayModel: Model<RolePlay>,
+    private readonly s3Service: S3Service,
   ) {}
 
   // ---------------------------
@@ -98,6 +107,37 @@ export class RoleplayService {
     return normalized ? normalized : undefined;
   }
 
+  private assertValidRolePlayAvatar(avatar: Express.Multer.File): void {
+    if (!avatar.buffer?.length) {
+      throw new BadRequestException('Roleplay avatar file is empty');
+    }
+
+    if (!ROLEPLAY_AVATAR_MIME_TYPES.includes(avatar.mimetype)) {
+      throw new BadRequestException(
+        `Roleplay avatar must be one of: ${ROLEPLAY_AVATAR_MIME_TYPES.join(', ')}`,
+      );
+    }
+
+    if (avatar.size > ROLEPLAY_AVATAR_MAX_BYTES) {
+      throw new BadRequestException(
+        `Roleplay avatar must not exceed ${ROLEPLAY_AVATAR_MAX_BYTES / (1024 * 1024)} MB`,
+      );
+    }
+  }
+
+  private async deleteStoredFile(
+    storageKey: string,
+    label: string,
+  ): Promise<void> {
+    try {
+      await this.s3Service.deleteFile(storageKey);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to delete ${label} from storage (${storageKey}): ${error}`,
+      );
+    }
+  }
+
   // Normalizes a persona payload into the stored shape, dropping empty optional fields.
   private normalizePersona(persona: CreateRolePlayPersonaDto): RolePlayPersona {
     const normalized: RolePlayPersona = {
@@ -108,6 +148,23 @@ export class RoleplayService {
     const personality = this.normalizeOptional(persona.personality);
     if (personality) {
       normalized.personality = personality;
+    }
+
+    if (persona.gender) {
+      normalized.gender = persona.gender;
+    }
+
+    if (
+      persona.voiceConfig &&
+      typeof persona.voiceConfig === 'object' &&
+      !Array.isArray(persona.voiceConfig)
+    ) {
+      normalized.voiceConfig = persona.voiceConfig as Record<string, any>;
+    }
+
+    const avatarUrl = this.normalizeOptional(persona.avatarUrl);
+    if (avatarUrl) {
+      normalized.avatarUrl = avatarUrl;
     }
 
     return normalized;
@@ -146,6 +203,9 @@ export class RoleplayService {
       name: persona.name,
       role: persona.role,
       personality: persona.personality,
+      gender: persona.gender,
+      voiceConfig: persona.voiceConfig,
+      avatarUrl: persona.avatarUrl,
     });
   }
 
@@ -243,24 +303,73 @@ export class RoleplayService {
   // ---------------------------
 
   // Creates a roleplay scenario; admin-only, enforced by PermissionsGuard at the controller.
-  async create(dto: CreateRolePlayDto): Promise<RolePlayDocument> {
-    const created = await this.rolePlayModel.create({
-      title: this.normalizeRequired(dto.title, 'Title', 3),
-      description: this.normalizeRequired(dto.description, 'Description', 10),
-      category: this.normalizeRequired(dto.category, 'Category', 2),
-      difficulty: dto.difficulty ?? RolePlayDifficulty.INTERMEDIATE,
-      systemPrompt: this.normalizeRequired(
-        dto.systemPrompt,
-        'System prompt',
-        10,
-      ),
-      aiPersona: this.normalizePersona(dto.aiPersona),
-      objectives: this.normalizeObjectives(dto.objectives),
-      isActive: dto.isActive ?? true,
-    });
+  async create(
+    dto: CreateRolePlayDto,
+    avatar?: Express.Multer.File,
+  ): Promise<RolePlayDocument> {
+    let uploadedAvatarKey: string | undefined;
+    let uploadedAvatarUrl: string | undefined;
+    console.log('create roleplay: ', dto, avatar);
+    try {
+      if (avatar) {
+        this.assertValidRolePlayAvatar(avatar);
+        const { storagePath, publicUrl } = await this.s3Service.uploadFile(
+          avatar.buffer,
+          {
+            filename: avatar.originalname,
+            mimeType: avatar.mimetype,
+            sizeBytes: avatar.size,
+            isPublic: true,
+          },
+        );
+        uploadedAvatarKey = storagePath;
+        uploadedAvatarUrl =
+          publicUrl ?? this.s3Service.getPublicUrlForObjectKey(storagePath);
+      }
+      console.log('roplay: ', {
+        title: dto.title,
+        description: dto.description,
+        category: dto.category,
+        difficulty: dto.difficulty ?? RolePlayDifficulty.INTERMEDIATE,
+        systemPrompt: dto.systemPrompt,
+        aiPersona: {
+          ...dto.aiPersona,
+          avatarUrl: uploadedAvatarUrl ?? dto.aiPersona.avatarUrl,
+        },
+        objectives: dto.objectives,
+        isActive: dto.isActive ?? true,
+      });
+      const created = await this.rolePlayModel.create({
+        title: this.normalizeRequired(dto.title, 'Title', 3),
+        description: this.normalizeRequired(dto.description, 'Description', 10),
+        category: this.normalizeRequired(dto.category, 'Category', 2),
+        difficulty: dto.difficulty ?? RolePlayDifficulty.INTERMEDIATE,
+        systemPrompt: this.normalizeRequired(
+          dto.systemPrompt,
+          'System prompt',
+          10,
+        ),
+        aiPersona: this.normalizePersona({
+          ...dto.aiPersona,
+          avatarUrl:
+            uploadedAvatarUrl ??
+            this.normalizeOptional(dto.aiPersona.avatarUrl),
+        }),
+        objectives: this.normalizeObjectives(dto.objectives),
+        isActive: dto.isActive ?? true,
+      });
 
-    this.logger.log(`Roleplay created: ${created._id.toString()}`);
-    return created;
+      this.logger.log(`Roleplay created: ${created._id.toString()}`);
+      return created;
+    } catch (error) {
+      if (uploadedAvatarKey) {
+        await this.deleteStoredFile(
+          uploadedAvatarKey,
+          'newly uploaded roleplay avatar',
+        );
+      }
+      throw error;
+    }
   }
 
   // Lists roleplays with pagination, search and allowlisted filters/sorting; available to any authenticated user.
@@ -283,76 +392,147 @@ export class RoleplayService {
   }
 
   // Applies a partial update; only the provided fields change and the persona is merged, not replaced.
-  async update(id: string, dto: UpdateRolePlayDto): Promise<RolePlayDocument> {
+  async update(
+    id: string,
+    dto: UpdateRolePlayDto,
+    avatar?: Express.Multer.File,
+  ): Promise<RolePlayDocument> {
     const existing = await this.getRolePlayOrFail(id);
     const updates: UpdateQuery<RolePlay> = {};
+    const previousAvatarUrl = existing.aiPersona?.avatarUrl;
+    let uploadedAvatarKey: string | undefined;
+    let uploadedAvatarUrl: string | undefined;
 
-    if (dto.title !== undefined) {
-      updates.title = this.normalizeRequired(dto.title, 'Title', 3);
-    }
-    if (dto.description !== undefined) {
-      updates.description = this.normalizeRequired(
-        dto.description,
-        'Description',
-        10,
-      );
-    }
-    if (dto.category !== undefined) {
-      updates.category = this.normalizeRequired(dto.category, 'Category', 2);
-    }
-    if (dto.difficulty !== undefined) {
-      updates.difficulty = dto.difficulty;
-    }
-    if (dto.systemPrompt !== undefined) {
-      updates.systemPrompt = this.normalizeRequired(
-        dto.systemPrompt,
-        'System prompt',
-        10,
-      );
-    }
-    if (dto.objectives !== undefined) {
-      updates.objectives = this.normalizeObjectives(dto.objectives);
-    }
-    if (dto.isActive !== undefined) {
-      updates.isActive = dto.isActive;
-    }
+    try {
+      if (avatar) {
+        this.assertValidRolePlayAvatar(avatar);
+        const { storagePath, publicUrl } = await this.s3Service.uploadFile(
+          avatar.buffer,
+          {
+            filename: avatar.originalname,
+            mimeType: avatar.mimetype,
+            sizeBytes: avatar.size,
+            isPublic: true,
+          },
+        );
+        uploadedAvatarKey = storagePath;
+        uploadedAvatarUrl =
+          publicUrl ?? this.s3Service.getPublicUrlForObjectKey(storagePath);
+      }
 
-    if (dto.aiPersona !== undefined) {
-      // Merged, so omitting a persona field keeps its stored value.
-      updates.aiPersona = {
-        ...this.toPlainPersona(existing.aiPersona),
-        ...this.stripUndefined({
-          name:
-            dto.aiPersona.name !== undefined
-              ? this.normalizeRequired(dto.aiPersona.name, 'Persona name')
-              : undefined,
-          role:
-            dto.aiPersona.role !== undefined
-              ? this.normalizeRequired(dto.aiPersona.role, 'Persona role')
-              : undefined,
-          personality: this.normalizeOptional(dto.aiPersona.personality),
-        }),
-      };
+      if (dto.title !== undefined) {
+        updates.title = this.normalizeRequired(dto.title, 'Title', 3);
+      }
+      if (dto.description !== undefined) {
+        updates.description = this.normalizeRequired(
+          dto.description,
+          'Description',
+          10,
+        );
+      }
+      if (dto.category !== undefined) {
+        updates.category = this.normalizeRequired(dto.category, 'Category', 2);
+      }
+      if (dto.difficulty !== undefined) {
+        updates.difficulty = dto.difficulty;
+      }
+      if (dto.systemPrompt !== undefined) {
+        updates.systemPrompt = this.normalizeRequired(
+          dto.systemPrompt,
+          'System prompt',
+          10,
+        );
+      }
+      if (dto.objectives !== undefined) {
+        updates.objectives = this.normalizeObjectives(dto.objectives);
+      }
+      if (dto.isActive !== undefined) {
+        updates.isActive = dto.isActive;
+      }
+
+      if (dto.aiPersona !== undefined) {
+        const personaAvatarUrl =
+          uploadedAvatarUrl ??
+          (dto.aiPersona.avatarUrl !== undefined
+            ? this.normalizeOptional(dto.aiPersona.avatarUrl)
+            : undefined);
+
+        updates.aiPersona = {
+          ...this.toPlainPersona(existing.aiPersona),
+          ...this.stripUndefined({
+            name:
+              dto.aiPersona.name !== undefined
+                ? this.normalizeRequired(dto.aiPersona.name, 'Persona name')
+                : undefined,
+            role:
+              dto.aiPersona.role !== undefined
+                ? this.normalizeRequired(dto.aiPersona.role, 'Persona role')
+                : undefined,
+            personality: this.normalizeOptional(dto.aiPersona.personality),
+            gender: dto.aiPersona.gender,
+            voiceConfig:
+              dto.aiPersona.voiceConfig !== undefined
+                ? (dto.aiPersona.voiceConfig as Record<string, any>)
+                : undefined,
+            avatarUrl: personaAvatarUrl,
+          }),
+        };
+      }
+
+      if (Object.keys(updates).length === 0) {
+        throw new BadRequestException('No fields to update');
+      }
+
+      const updated = await this.rolePlayModel
+        .findByIdAndUpdate(
+          id,
+          { $set: updates },
+          { new: true, runValidators: true },
+        )
+        .exec()
+        .catch(async (error) => {
+          if (uploadedAvatarKey) {
+            await this.deleteStoredFile(
+              uploadedAvatarKey,
+              'newly uploaded roleplay avatar',
+            );
+          }
+          throw error;
+        });
+
+      if (!updated) {
+        if (uploadedAvatarKey) {
+          await this.deleteStoredFile(
+            uploadedAvatarKey,
+            'newly uploaded roleplay avatar',
+          );
+        }
+        throw new NotFoundException(`Roleplay with id ${id} not found`);
+      }
+
+      if (uploadedAvatarKey && previousAvatarUrl) {
+        const previousKey =
+          this.s3Service.extractOwnedStoragePath(previousAvatarUrl);
+        if (previousKey) {
+          await this.deleteStoredFile(previousKey, 'previous roleplay avatar');
+        } else {
+          this.logger.warn(
+            `Left previous roleplay avatar untouched (not stored in our bucket): ${previousAvatarUrl}`,
+          );
+        }
+      }
+
+      this.logger.log(`Roleplay updated: ${id}`);
+      return updated;
+    } catch (error) {
+      if (uploadedAvatarKey) {
+        await this.deleteStoredFile(
+          uploadedAvatarKey,
+          'newly uploaded roleplay avatar',
+        );
+      }
+      throw error;
     }
-
-    if (Object.keys(updates).length === 0) {
-      throw new BadRequestException('No fields to update');
-    }
-
-    const updated = await this.rolePlayModel
-      .findByIdAndUpdate(
-        id,
-        { $set: updates },
-        { new: true, runValidators: true },
-      )
-      .exec();
-
-    if (!updated) {
-      throw new NotFoundException(`Roleplay with id ${id} not found`);
-    }
-
-    this.logger.log(`Roleplay updated: ${id}`);
-    return updated;
   }
 
   // Soft-deletes a roleplay by clearing its active flag, preserving session and report history.

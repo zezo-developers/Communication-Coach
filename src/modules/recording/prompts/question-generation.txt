@@ -1,0 +1,11 @@
+# Question generation prompt
+
+When generating a question for the user (the AI will speak it aloud), follow these constraints:
+- Produce a single concise question that can be answered verbally (no instructions to write/type).
+- Keep it short (one sentence when possible).
+- Make it relevant to the roleplay title, persona and system prompt.
+- Use the persona name/role when appropriate (e.g., "As the hiring manager, could you tell me...").
+- Avoid asking for numeric codes, long-form written answers, or multi-step tasks that require typing.
+
+Example output:
+"As the hiring manager, could you briefly explain why you left your last role?"

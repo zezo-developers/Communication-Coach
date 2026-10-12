@@ -1,0 +1,159 @@
+User [icon: users, color: blue] {
+  _id ObjectId pk
+  firstName string
+  lastName string
+  email string unique
+  password string
+  avatarUrl string null
+  role enum('user','admin') default 'user'
+  status enum('active','inactive','suspended','pending') default 'pending'
+  emailVerified boolean default false
+  isBlocked boolean default false
+  refreshTokenHash string null
+  createdAt date
+  updatedAt date
+
+  fullName string virtual
+}
+
+Otp [icon: key, color: purple] {
+  _id ObjectId pk
+  email string
+  otp string
+  type enum('email_verification','password_reset')
+  expiresAt date
+  attempts number default 0
+  createdAt date
+  updatedAt date
+}
+
+RolePlay [icon: chat, color: green] {
+  _id ObjectId pk
+  title string
+  description string
+  category string
+  difficulty enum('beginner','intermediate','advanced') default 'intermediate'
+  systemPrompt string
+  aiPersona RolePlayPersona
+  objectives string[] default []
+  isActive boolean default true
+  createdAt date
+  updatedAt date
+}
+
+RolePlayPersona [icon: user, color: teal] {
+  name string
+  role string
+  personality string null
+}
+
+RolePlaySession [icon: play, color: orange] {
+  _id ObjectId pk
+  userId ObjectId ref User
+  rolePlayId ObjectId ref RolePlay
+  status enum('created','in_progress','completed','failed') default 'created'
+  startedAt date null
+  endedAt date null
+  durationSeconds number null
+  createdAt date
+  updatedAt date
+}
+
+ConversationTurn [icon: comment, color: yellow] {
+  _id ObjectId pk
+  sessionId ObjectId ref RolePlaySession
+  speaker enum('user','ai')
+  sequence number
+  text string
+  startTimeSec number null
+  endTimeMsSec number null
+  durationSec number null
+  wordCount number null
+  createdAt date
+  updatedAt date
+}
+
+Recording [icon: mic, color: red] {
+  _id ObjectId pk
+  sessionId ObjectId ref RolePlaySession
+  storageKey string
+  storageUrl string null
+  mimeType string
+  fileSizeBytes number null
+  durationSeconds number null
+  status enum('uploading','processing','completed','failed') default 'uploading'
+  transcriptStatus enum('uploading','processing','completed','failed') default 'uploading'
+  createdAt date
+  updatedAt date
+}
+
+Report [icon: file-text, color: indigo] {
+  _id ObjectId pk
+  sessionId ObjectId ref RolePlaySession unique
+  userId ObjectId ref User
+  status enum('generating','completed','failed') default 'generating'
+  overallScore number null min 0 max 5
+  summary string null
+  model string null
+  promptVersion string null
+  createdAt date
+  updatedAt date
+}
+
+Pronunciation [icon: spellcheck, color: cyan] {
+  _id ObjectId pk
+  reportId ObjectId ref Report
+  turnId ObjectId ref ConversationTurn null
+  original string
+  corrected string
+  pronunciation string null
+  explanation string null
+  startTimeSec number null
+  endTimeSec number null
+  createdAt date
+  updatedAt date
+}
+
+ReportFeedback [icon: star, color: pink] {
+  _id ObjectId pk
+  reportId ObjectId ref Report unique
+  activeListening FeedbackScore
+  star StarSection
+  strengths string[] default []
+  growthPoints string[] default []
+  tones string[] default []
+  conciseness FeedbackScore
+  createdAt date
+  updatedAt date
+}
+
+FeedbackScore [icon: award, color: pink] {
+  score number min 0 max 5
+  feedback string
+}
+
+StarSection [icon: sparkles, color: pink] {
+  situation FeedbackScore
+  task FeedbackScore
+  action FeedbackScore
+  result FeedbackScore
+  overallScore number null min 0 max 5
+}
+
+User ||--o{ Otp : "email-based OTPs"
+User ||--o{ RolePlaySession : "creates"
+User ||--o{ Report : "owns"
+RolePlay ||--o{ RolePlaySession : "is used in"
+RolePlaySession ||--o{ ConversationTurn : "contains"
+RolePlaySession ||--o{ Recording : "stores"
+RolePlaySession ||--|| Report : "has one report"
+Report ||--o{ Pronunciation : "contains"
+Report ||--|| ReportFeedback : "has one feedback"
+ConversationTurn ||--o{ Pronunciation : "is analyzed in"
+ReportFeedback ||--|| FeedbackScore : "activeListening"
+ReportFeedback ||--|| FeedbackScore : "conciseness"
+ReportFeedback ||--|| StarSection : "star"
+StarSection ||--|| FeedbackScore : "situation"
+StarSection ||--|| FeedbackScore : "task"
+StarSection ||--|| FeedbackScore : "action"
+StarSection ||--|| FeedbackScore : "result"
