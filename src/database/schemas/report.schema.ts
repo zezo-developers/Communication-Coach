@@ -48,6 +48,9 @@ export class Report {
   summary?: string;
 
   @Prop()
+  recordingUrl?: string;
+
+  @Prop()
   model?: string;
 
   @Prop()

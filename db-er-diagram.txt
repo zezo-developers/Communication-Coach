@@ -94,6 +94,7 @@ Report [icon: file-text, color: indigo] {
   status enum('generating','completed','failed') default 'generating'
   overallScore number null min 0 max 5
   summary string null
+  recordingUrl string null
   model string null
   promptVersion string null
   createdAt date

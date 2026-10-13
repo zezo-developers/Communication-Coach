@@ -30,6 +30,7 @@ import { RolePlay, RolePlayDocument } from '@/database/schemas/rolePlay.schema';
 import {
   RolePlaySession,
   RolePlaySessionDocument,
+  RolePlaySessionStatus,
 } from '@/database/schemas/rolePlaySession.schema';
 
 @Injectable()
@@ -381,9 +382,27 @@ export class RecordingService {
       parts,
     });
 
+    const publicUrl = this.s3Service.getPublicUrlForObjectKey(completed.key);
+
+    // Persist the recording URL on the session's report (if it exists)
+    await this.reportModel
+      .updateOne(
+        { sessionId: new Types.ObjectId(sessionId) },
+        { $set: { recordingUrl: publicUrl } },
+      )
+      .exec();
+
+    // Mark the session as completed
+    await this.rolePlaySessionModel
+      .updateOne(
+        { _id: new Types.ObjectId(sessionId) },
+        { $set: { status: RolePlaySessionStatus.COMPLETED } },
+      )
+      .exec();
+
     return {
       storagePath: completed.key,
-      publicUrl: this.s3Service.getPublicUrlForObjectKey(completed.key),
+      publicUrl,
       location: completed.location,
     };
   }
@@ -538,7 +557,7 @@ export class RecordingService {
         {
           $set: {
             sessionId: session._id,
-            userId: session.userId,
+            userId: new Types.ObjectId(session.userId as any),
             status: ReportStatus.COMPLETED,
             overallScore: analysis.overallScore,
             summary: analysis.summary,

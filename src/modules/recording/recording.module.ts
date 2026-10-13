@@ -17,6 +17,8 @@ import {
   RolePlaySessionSchema,
 } from '@/database/schemas/rolePlaySession.schema';
 import { FileModule } from '@/modules/file/file.module';
+import { ConversationService } from './services/conversation.service';
+import { ConversationController } from './controllers/conversation.controller';
 
 @Module({
   imports: [
@@ -29,8 +31,8 @@ import { FileModule } from '@/modules/file/file.module';
       { name: ReportFeedback.name, schema: ReportFeedbackSchema },
     ]),
   ],
-  providers: [RecordingService],
-  controllers: [RecordingController],
+  providers: [RecordingService, ConversationService],
+  controllers: [RecordingController, ConversationController],
   exports: [RecordingService],
 })
 export class RecordingModule {}

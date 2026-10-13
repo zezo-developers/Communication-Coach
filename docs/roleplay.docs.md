@@ -1,5 +1,42 @@
 # Communication Coach — RolePlay API Documentation
 
+## RolePlay Sessions
+
+### Create a Roleplay Session
+
+**Endpoint:**
+`POST /roleplaly-session/create-session`
+
+**Description:**
+Creates a new roleplay session for the authenticated user. Marks previous non-terminal sessions as failed, and returns the first batch of MP3 recording presigned upload URLs.
+
+**Headers:**
+- `Authorization` (required): Bearer token obtained after authentication.
+
+**Request Body:**
+```json
+{
+  "rolePlayId": "string"
+}
+```
+- `rolePlayId` (string, required): The ID of the roleplay associated with the session.
+
+**Responses:**
+- **200 OK:**
+  ```json
+  {
+    "sessionId": "string",
+    "uploadUrls": [
+      "string"
+    ]
+  }
+  ```
+  - `sessionId`: ID of the created session.
+  - `uploadUrls`: Array of presigned MP3 recording upload URLs.
+
+- **400 Bad Request:** When user or rolePlayId is missing.
+```
+
 Complete reference for every endpoint exposed by `RoleplayController`
 ([src/modules/roleplay/controllers/roleplay.controller.controller.ts](../src/modules/roleplay/controllers/roleplay.controller.controller.ts))
 and the `RolePlay` schema it persists to

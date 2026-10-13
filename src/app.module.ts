@@ -13,6 +13,9 @@ import { AuthModule } from './modules/auth/auth.module';
 import { RoleplayModule } from './modules/roleplay/roleplay.module';
 import { FileModule } from './modules/file/file.module';
 import { RecordingModule } from './modules/recording/recording.module';
+import { ReportModule } from './modules/report/report.module';
+import { UserStatsModule } from './modules/user-stats/user-stats.module';
+
 
 @Module({
   imports: [
@@ -58,6 +61,10 @@ import { RecordingModule } from './modules/recording/recording.module';
     FileModule,
 
     RecordingModule,
+
+    ReportModule,
+
+    UserStatsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
