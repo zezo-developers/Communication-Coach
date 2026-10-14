@@ -46,6 +46,9 @@ export class RolePlaySession {
 
   @Prop()
   durationSeconds?: number;
+
+  @Prop()
+  recordingUrl?: string;
 }
 
 export const RolePlaySessionSchema =

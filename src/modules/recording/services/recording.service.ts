@@ -365,7 +365,12 @@ export class RecordingService {
     uploadId: string,
     storagePath: string,
     parts: CompletedRecordingPartDto[],
-  ): Promise<{ storagePath: string; publicUrl: string; location?: string }> {
+  ): Promise<{
+    storagePath: string;
+    publicUrl: string;
+    location?: string;
+    savedReport: ReportDocument;
+  }> {
     await this.getOwnedSession(userId, sessionId, rolePlayId);
     this.assertRecordingStoragePath(storagePath, userId, rolePlayId, sessionId);
 
@@ -384,19 +389,38 @@ export class RecordingService {
 
     const publicUrl = this.s3Service.getPublicUrlForObjectKey(completed.key);
 
-    // Persist the recording URL on the session's report (if it exists)
-    await this.reportModel
-      .updateOne(
-        { sessionId: new Types.ObjectId(sessionId) },
-        { $set: { recordingUrl: publicUrl } },
+    const sessionObjectId = new Types.ObjectId(sessionId);
+    const userObjectId = new Types.ObjectId(userId);
+
+    const savedReport = await this.reportModel
+      .findOneAndUpdate(
+        { sessionId: sessionObjectId },
+        {
+          $set: { recordingUrl: publicUrl },
+          $setOnInsert: {
+            sessionId: sessionObjectId,
+            userId: userObjectId,
+            status: ReportStatus.GENERATING,
+          },
+        },
+        {
+          new: true,
+          upsert: true,
+          runValidators: true,
+          setDefaultsOnInsert: true,
+        },
       )
       .exec();
-
     // Mark the session as completed
     await this.rolePlaySessionModel
       .updateOne(
         { _id: new Types.ObjectId(sessionId) },
-        { $set: { status: RolePlaySessionStatus.COMPLETED } },
+        {
+          $set: {
+            status: RolePlaySessionStatus.COMPLETED,
+            recordingUrl: publicUrl,
+          },
+        },
       )
       .exec();
 
@@ -404,6 +428,7 @@ export class RecordingService {
       storagePath: completed.key,
       publicUrl,
       location: completed.location,
+      savedReport,
     };
   }
 
@@ -537,7 +562,7 @@ export class RecordingService {
           transcript,
         }),
       );
-      analysis = result.finalOutput as any;
+      analysis = result.finalOutput;
       if (typeof analysis === 'string') analysis = JSON.parse(analysis);
       if (!analysis || typeof analysis !== 'object')
         throw new Error('Empty structured report output');
@@ -551,19 +576,30 @@ export class RecordingService {
       );
     }
 
+    const existingReport = await this.reportModel
+      .findOne({ sessionId: session._id })
+      .select({ recordingUrl: 1 })
+      .lean()
+      .exec();
+    const recordingUrl = existingReport?.recordingUrl ?? session.recordingUrl;
+    const reportUpdate: Partial<Report> = {
+      sessionId: session._id,
+      userId: new Types.ObjectId(String(session.userId)),
+      status: ReportStatus.COMPLETED,
+      overallScore: analysis.overallScore,
+      summary: analysis.summary,
+      model: 'gpt-4o-mini',
+      promptVersion: 'communication-report-agent-v1',
+    };
+    if (recordingUrl) {
+      reportUpdate.recordingUrl = recordingUrl;
+    }
+
     const report = await this.reportModel
       .findOneAndUpdate(
         { sessionId: session._id },
         {
-          $set: {
-            sessionId: session._id,
-            userId: new Types.ObjectId(session.userId as any),
-            status: ReportStatus.COMPLETED,
-            overallScore: analysis.overallScore,
-            summary: analysis.summary,
-            model: 'gpt-4o-mini',
-            promptVersion: 'communication-report-agent-v1',
-          },
+          $set: reportUpdate,
         },
         {
           new: true,
