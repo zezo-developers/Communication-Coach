@@ -1,4 +1,7 @@
 onlyBuiltDependencies:
   - bcrypt
   - bcryptjs
+ignoredBuiltDependencies:
   - '@parcel/watcher'
+  - '@scarf/scarf'
+  - unrs-resolver
