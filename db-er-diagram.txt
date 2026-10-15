@@ -16,6 +16,36 @@ User [icon: users, color: blue] {
   fullName string virtual
 }
 
+UserConversationCheck [icon: clipboard-check, color: indigo] {
+  _id ObjectId pk
+  userId ObjectId ref User unique
+  status enum('pending','in_progress','completed','failed') default 'pending'
+  lastConversation ConversationMessage[] default []
+  scores UserConversationScores null
+  overallScore number null min 0 max 5
+  reCheckCoversationAt number null default 1
+  level enum('beginner','intermediate','advanced') null
+  strengths string[] default []
+  improvements string[] default []
+  assessedAt date null
+  createdAt date
+  updatedAt date
+}
+
+ConversationMessage {
+  role enum('user','ai')
+  message string
+}
+
+UserConversationScores {
+  sentenceFraming number min 0 max 5
+  vocabulary number min 0 max 5
+  grammar number min 0 max 5
+  fluency number min 0 max 5
+  coherence number min 0 max 5
+  confidence number min 0 max 5
+}
+
 Otp [icon: key, color: purple] {
   _id ObjectId pk
   email string
@@ -142,6 +172,7 @@ StarSection [icon: sparkles, color: pink] {
 }
 
 User ||--o{ Otp : "email-based OTPs"
+User ||--o| UserConversationCheck : "has conversation assessment"
 User ||--o{ RolePlaySession : "creates"
 User ||--o{ Report : "owns"
 RolePlay ||--o{ RolePlaySession : "is used in"

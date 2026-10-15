@@ -19,6 +19,10 @@ import {
 import { FileModule } from '@/modules/file/file.module';
 import { ConversationService } from './services/conversation.service';
 import { ConversationController } from './controllers/conversation.controller';
+import {
+  UserConversationCheck,
+  UserConversationCheckSchema,
+} from '@/database/schemas/userConversationCheck.schema';
 
 @Module({
   imports: [
@@ -29,6 +33,7 @@ import { ConversationController } from './controllers/conversation.controller';
       { name: RolePlaySession.name, schema: RolePlaySessionSchema },
       { name: Report.name, schema: ReportSchema },
       { name: ReportFeedback.name, schema: ReportFeedbackSchema },
+      { name: UserConversationCheck.name, schema: UserConversationCheckSchema },
     ]),
   ],
   providers: [RecordingService, ConversationService],

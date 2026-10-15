@@ -32,6 +32,10 @@ import {
   RolePlaySessionDocument,
   RolePlaySessionStatus,
 } from '@/database/schemas/rolePlaySession.schema';
+import {
+  UserConversationCheck,
+  UserConversationCheckDocument,
+} from '@/database/schemas/userConversationCheck.schema';
 
 @Injectable()
 export class RecordingService {
@@ -41,6 +45,8 @@ export class RecordingService {
   constructor(
     @InjectModel(ConversationTurn.name)
     private readonly conversationModel: Model<ConversationTurnDocument>,
+    @InjectModel(UserConversationCheck.name)
+    private readonly userConversationCheckModel: Model<UserConversationCheckDocument>,
     @InjectModel(RolePlay.name)
     private readonly rolePlayModel: Model<RolePlayDocument>,
     @InjectModel(RolePlaySession.name)
@@ -204,16 +210,57 @@ export class RecordingService {
           .join('\n')
       : '(No previous conversation turns. Start the roleplay with an opening question.)';
 
+    const userConversationCheck = await this.userConversationCheckModel.findOne(
+      {
+        userId: new Types.ObjectId(userId),
+      },
+    );
+
+    let userConversationScroe = userConversationCheck?.scores;
+
+    if (!userConversationScroe) {
+      userConversationScroe = {
+        sentenceFraming: 0,
+        vocabulary: 0,
+        grammar: 0,
+        fluency: 0,
+        coherence: 0,
+        confidence: 0,
+      };
+    }
+
     const questionAgent = new Agent({
       name: 'Communication Roleplay Interviewer',
       model: 'gpt-4o-mini',
+
       instructions: [
-        'You are conducting a realistic spoken communication roleplay.',
-        'Use the roleplay scenario, objectives, persona, and complete conversation history.',
-        'Ask exactly ONE natural follow-up question that is easy to answer aloud.',
-        'Do not repeat a question already asked. Respond to the latest user answer and move the scenario forward.',
+        'You are a realistic spoken communication roleplay interviewer.',
+        'You must strictly remain in the assigned roleplay scenario and act according to the provided AI persona at all times.',
+        'Use the roleplay scenario, objectives, persona, difficulty, complete conversation history, and user communication profile to guide your responses.',
+
+        'The user communication profile contains baseline English communication scores from a previous assessment. Scores range from 0 to 5, where lower scores indicate areas that may need improvement and higher scores indicate stronger skills.',
+        'The profile includes sentenceFraming, vocabulary, grammar, fluency, coherence, and confidence.',
+
+        'Use the baseline scores internally to choose questions that naturally encourage the user to demonstrate their current communication abilities and reveal opportunities for improvement.',
+        'If sentence framing is weak, ask questions that encourage the user to explain ideas, describe experiences, or express opinions in complete sentences.',
+        'If vocabulary is weak, ask questions that encourage the user to describe things, compare options, explain preferences, or discuss experiences using varied words.',
+        'If grammar is weak, ask natural questions that encourage the user to explain events, plans, reasons, or hypothetical situations using different sentence structures.',
+        'If fluency or confidence is weak, ask approachable, conversational questions that encourage the user to speak comfortably and elaborate without feeling tested.',
+        'If coherence is weak, ask questions that encourage the user to explain reasons, describe sequences of events, or connect ideas logically.',
+        'When multiple aspects need improvement, choose a question that naturally creates an opportunity to observe more than one aspect.',
+        'For stronger aspects, gradually introduce more nuanced questions that encourage detailed explanations, reasoning, and natural expression without abruptly increasing difficulty.',
+
+        'These scores represent the user’s current baseline, not their permanent ability. Do not assume the user will perform at exactly the same level in every response.',
+        'Never mention the scores, assessment, English proficiency analysis, or improvement strategy to the user.',
+        'Never explicitly test grammar, vocabulary, pronunciation, fluency, or confidence. Do not ask the user to correct sentences, define words, or perform language exercises.',
+        'Every question must make sense within the roleplay situation and sound like something the assigned persona would genuinely ask.',
+        'Do not sacrifice roleplay realism merely to assess a communication skill. If an assessment opportunity conflicts with the scenario, prioritize the scenario.',
+
+        'Ask exactly ONE natural follow-up question per response.',
+        'Respond to the latest user answer and move the scenario forward.',
+        'Do not repeat a question already asked.',
         'If there are no prior turns, ask a relevant opening question.',
-        'Return only the question itself. Do not include labels, explanations, markdown, or multiple questions.',
+        'Return only the question itself. Do not include labels, explanations, markdown, feedback, or multiple questions.',
       ].join(' '),
     });
 
@@ -230,6 +277,14 @@ export class RecordingService {
           role: persona.role,
           personality: persona.personality,
         },
+      },
+      userCommunicationProfile: {
+        sentenceFraming: userConversationScroe.sentenceFraming,
+        vocabulary: userConversationScroe.vocabulary,
+        grammar: userConversationScroe.grammar,
+        fluency: userConversationScroe.fluency,
+        coherence: userConversationScroe.coherence,
+        confidence: userConversationScroe.confidence,
       },
       conversation,
     });
@@ -533,6 +588,25 @@ export class RecordingService {
           `${turn.speaker === ConversationSpeaker.AI ? 'AI' : 'User'}: ${turn.text}`,
       )
       .join('\n');
+
+    const userConversationCheck = await this.userConversationCheckModel.findOne(
+      {
+        userId: new Types.ObjectId(userId),
+      },
+    );
+
+    let userConversationScroe = userConversationCheck?.scores;
+
+    if (!userConversationScroe) {
+      userConversationScroe = {
+        sentenceFraming: 0,
+        vocabulary: 0,
+        grammar: 0,
+        fluency: 0,
+        coherence: 0,
+        confidence: 0,
+      };
+    }
 
     let analysis: any;
     try {

@@ -15,6 +15,7 @@ import { FileModule } from './modules/file/file.module';
 import { RecordingModule } from './modules/recording/recording.module';
 import { ReportModule } from './modules/report/report.module';
 import { UserStatsModule } from './modules/user-stats/user-stats.module';
+import { ConversationCheckModule } from './modules/conversation-check/conversation-check.module';
 
 
 @Module({
@@ -65,6 +66,8 @@ import { UserStatsModule } from './modules/user-stats/user-stats.module';
     ReportModule,
 
     UserStatsModule,
+
+    ConversationCheckModule,
   ],
   controllers: [AppController],
   providers: [AppService],
