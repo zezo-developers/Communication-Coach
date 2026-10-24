@@ -15,7 +15,7 @@ flowchart TB
     GetReport["GET /reports/:reportId"]
   end
 
-  Db[("MongoDB\nreports / report_feedback / roleplay_sessions / conversation_turns")]
+  Db[("MongoDB\nreports / report_feedback / pronunciations / roleplay_sessions / conversation_turns")]
 
   Client --> ListReports --> Db
   Client --> GetReport --> Db
@@ -91,6 +91,27 @@ export interface ReportFeedbackDto {
   growthPoints: string[];
   tones: string[];
   conciseness: { score: number; feedback: string; };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PronunciationErrorDto {
+  position: number;       // position reported by the pronunciation analyzer
+  word: string;           // word with the detected pronunciation issue
+  expected: string;       // expected sound
+  actual: string;         // detected sound
+  confidence: number;     // 0..1
+  explanation: string;    // learner-facing guidance
+}
+
+export interface PronunciationDto {
+  _id: ObjectId;
+  reportId: ObjectId;
+  turnId?: ObjectId;      // conversation turn this analysis belongs to
+  transcript: string;
+  language: string;
+  feedback: string;       // overall learner-facing feedback for the turn
+  errors: PronunciationErrorDto[];
   createdAt: string;
   updatedAt: string;
 }
@@ -228,6 +249,7 @@ curl -X GET "{BASE_URL}/reports?search=communication&status=completed&minScore=3
 interface GetReportDetailResponse {
   report: ReportDto;
   feedback: ReportFeedbackDto | null;  // may be null if not generated yet
+  pronunciation: PronunciationDto[];  // ordered by creation time; may be empty or incomplete while analysis is pending
   conversation: {
     sessionId: ObjectId;
     session: any;                      // RolePlaySession document
@@ -300,6 +322,28 @@ Example:
     ],
     "updatedAt": "2026-10-13T10:11:26.399Z"
   },
+  "pronunciation": [
+    {
+      "_id": "6ace03ce4597c170172dc6aa",
+      "reportId": "6ace03ce4597c170172dc6a8",
+      "turnId": "6ace0310ef4490d0bd1b6ebc",
+      "transcript": "It solves the AI automation problem and I think AI is the leading technology in the current era and that's why it will help your business.",
+      "language": "en-US",
+      "feedback": "Your speech was clear overall. Practice the target sounds in the flagged word.",
+      "errors": [
+        {
+          "position": 13,
+          "word": "technology",
+          "expected": "dʒ",
+          "actual": "j",
+          "confidence": 0.87,
+          "explanation": "For /dʒ/, begin with a brief stop and release into a voiced fricative; feel your vocal cords vibrate."
+        }
+      ],
+      "createdAt": "2026-10-13T10:08:17.000Z",
+      "updatedAt": "2026-10-13T10:08:17.000Z"
+    }
+  ],
   "conversation": {
     "sessionId": "6ace02e8ef4490d0bd1b6eb9",
     "session": {
@@ -463,3 +507,6 @@ curl -X GET "{BASE_URL}/reports/66d1d5f1d8d3070019e8f8c9" \
 **Notes:**
 - `recordingUrl` is populated after the multipart recording completes.
 - Conversation turns are sorted to reflect the dialog order.
+- `pronunciation` contains the available pronunciation analysis records for the report, ordered by creation time. Match each record's `turnId` to a `conversation.turns[*]._id` value to display its feedback with the corresponding answer.
+- Pronunciation analysis runs asynchronously after an audio answer is submitted. The array may be empty or incomplete while analysis jobs are pending; fetch the report detail again to retrieve completed results.
+- Each record contains the analyzed `transcript`, `language`, overall learner-facing `feedback`, and `errors`. Each error includes the analyzer-reported `position`, `word`, expected and detected sounds (`expected` and `actual`), a `confidence` value from 0 to 1, and an `explanation` suitable for showing as learner guidance. An empty `errors` array means no pronunciation errors were detected.

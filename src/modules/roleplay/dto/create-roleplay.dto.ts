@@ -80,7 +80,7 @@ export class CreateRolePlayDto {
       personality: 'Direct but fair, asks follow-up questions',
       gender: 'male',
       voiceConfig: {
-        voice: 'nova',
+        voice: 'alloy',
         language: 'en-US',
         style: 'friendly',
       },

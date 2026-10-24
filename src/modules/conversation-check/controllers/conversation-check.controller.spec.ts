@@ -3,6 +3,7 @@ import { ConversationMessageRole } from '@/database/schemas/userConversationChec
 import { ConversationCheckController } from './conversation-check.controller';
 import { SubmitConversationTestDto } from '../dto/submit-conversation-test.dto';
 import { ConversationCheckService } from '../services/conversation-check.service';
+import { DigitalOceanService } from '../services/digitalocean.service';
 
 describe('ConversationCheckController', () => {
   let controller: ConversationCheckController;
@@ -10,6 +11,9 @@ describe('ConversationCheckController', () => {
     generateCasualQuestions: jest.Mock;
     checkConversationTest: jest.Mock;
     submitConversationTest: jest.Mock;
+  };
+  let digitalOceanService: {
+    testModel: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -24,6 +28,12 @@ describe('ConversationCheckController', () => {
             submitConversationTest: jest.fn(),
           },
         },
+        {
+          provide: DigitalOceanService,
+          useValue: {
+            testModel: jest.fn(),
+          },
+        },
       ],
     }).compile();
 
@@ -31,6 +41,7 @@ describe('ConversationCheckController', () => {
       ConversationCheckController,
     );
     service = module.get(ConversationCheckService);
+    digitalOceanService = module.get(DigitalOceanService);
   });
 
   it('should be defined', () => {
@@ -90,5 +101,18 @@ describe('ConversationCheckController', () => {
       userId,
       dto.conversation,
     );
+  });
+
+  it('returns the DigitalOcean connectivity check result', async () => {
+    const result = {
+      success: true as const,
+      provider: 'DigitalOcean' as const,
+      model: 'llama3.3-70b-instruct',
+      response: 'DigitalOcean AI is responding.',
+    };
+    digitalOceanService.testModel.mockResolvedValue(result);
+
+    await expect(controller.testDigitalOcean()).resolves.toEqual(result);
+    expect(digitalOceanService.testModel).toHaveBeenCalledTimes(1);
   });
 });

@@ -22,6 +22,7 @@ import {
 import { JwtAuthGuard } from 'src/modules/auth/guards/jwt-auth.guard';
 import { AuthenticatedUser } from 'src/modules/auth/strategies/jwt.strategy';
 import { CreateTextToSpeechDto } from '../dto/create-text-to-speech.dto';
+import { EnhancedConversationDto } from '../dto/enhanced-conversation.dto';
 import { GenerateSessionReportDto } from '../dto/generate-session-report.dto';
 import { SpeechToTextDto } from '../dto/speech-to-text.dto';
 import {
@@ -130,7 +131,7 @@ export class RecordingController {
   @UseInterceptors(
     FileInterceptor('audio', {
       storage: memoryStorage(),
-      limits: { files: 1, fileSize: 20 * 1024 * 1024 },
+      limits: { files: 1, fileSize: 10 * 1024 * 1024 },
     }),
   )
   @ApiConsumes('multipart/form-data')
@@ -150,7 +151,8 @@ export class RecordingController {
         audio: {
           type: 'string',
           format: 'binary',
-          description: 'Audio file to convert into text',
+          description:
+            'Audio file up to 10 MB and 1 minute in duration to convert into text',
         },
       },
       additionalProperties: false,
@@ -159,7 +161,7 @@ export class RecordingController {
   @ApiOperation({
     summary: 'Transcribe audio and save the user answer',
     description:
-      'Accepts only rolePlayId, sessionId, and an audio file in the `audio` multipart field, transcribes the audio with OpenAI, and saves the result as a user conversation turn.',
+      'Accepts only rolePlayId, sessionId, and an audio file up to 10 MB and 1 minute in duration in the `audio` multipart field, transcribes it with Google Gemini, and saves the result as a user conversation turn.',
   })
   async speechToText(
     @Req() req: any,
@@ -179,6 +181,23 @@ export class RecordingController {
       dto.sessionId,
       audio.mimetype,
       audio.originalname,
+    );
+  }
+
+  @Post('enhanced-conversation')
+  @ApiOperation({
+    summary: 'Enhance a user conversation turn',
+    description:
+      'Rewrites an owned user answer as natural English using the preceding AI question for context, optionally suggests useful vocabulary, and saves the enhancement on the conversation turn.',
+  })
+  @ApiBody({ type: EnhancedConversationDto })
+  async enhanceConversation(
+    @Req() req: any,
+    @Body() dto: EnhancedConversationDto,
+  ) {
+    return this.recordingService.enhancedConversation(
+      this.getAuthenticatedUserId(req),
+      dto,
     );
   }
 

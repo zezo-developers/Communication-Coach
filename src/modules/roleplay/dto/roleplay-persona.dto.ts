@@ -44,7 +44,8 @@ export class CreateRolePlayPersonaDto {
   personality?: string;
 
   @ApiPropertyOptional({
-    description: 'Voice gender style for the persona when generating spoken output.',
+    description:
+      'Voice gender style for the persona when generating spoken output.',
     enum: ROLEPLAY_PERSONA_GENDERS,
     example: 'male',
   })
@@ -56,8 +57,8 @@ export class CreateRolePlayPersonaDto {
 
   @ApiPropertyOptional({
     description:
-      'OpenAI TTS configuration object. Example: { voice: "nova", language: "en-US", style: "friendly" }',
-    example: { voice: 'nova', language: 'en-US', style: 'friendly' },
+      'DigitalOcean TTS configuration object. Example: { voice: "alloy", language: "en-US", style: "friendly" }',
+    example: { voice: 'alloy', language: 'en-US', style: 'friendly' },
     additionalProperties: true,
   })
   @IsOptional()

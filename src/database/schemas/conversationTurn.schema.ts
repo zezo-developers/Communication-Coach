@@ -8,6 +8,38 @@ export enum ConversationSpeaker {
   AI = 'ai',
 }
 
+@Schema({ _id: false })
+export class VocabularyItem {
+  @Prop({
+    required: true,
+  })
+  word!: string;
+
+  @Prop({
+    required: true,
+  })
+  meaning!: string;
+
+  @Prop({
+    required: true,
+  })
+  exampleWordInSentence!: string;
+}
+
+@Schema({ _id: false })
+export class EnhancedConversationTurn {
+  @Prop({
+    required: true,
+  })
+  naturalSentence!: string;
+
+  @Prop({
+    type: [VocabularyItem],
+    required: true,
+  })
+  vocabularyItems!: VocabularyItem[];
+}
+
 @Schema({
   timestamps: true,
   collection: 'conversation_turns',
@@ -48,6 +80,11 @@ export class ConversationTurn {
 
   @Prop()
   wordCount?: number;
+
+  @Prop({
+    type: EnhancedConversationTurn,
+  })
+  enhancedTurn?: EnhancedConversationTurn;
 }
 
 export const ConversationTurnSchema =
