@@ -104,7 +104,7 @@ export class ReportController {
   @ApiOperation({
     summary: 'Get report detail',
     description:
-      'Returns the report, its feedback, and all associated conversation turns for the session.',
+      'Returns the report, report feedback, pronunciation analyses linked to their conversation turns, and all conversation turns for the session.',
   })
   @ApiParam({
     name: 'reportId',

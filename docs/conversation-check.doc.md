@@ -6,15 +6,21 @@ Reference for the endpoints exposed by
 ## Overview
 
 These endpoints generate casual English assessment questions, determine whether
-another assessment is due, and submit a conversation for AI assessment.
+another assessment is due, submit a conversation for AI assessment, and check
+DigitalOcean AI connectivity.
 
-| Method | Endpoint | Purpose | Authentication |
-| --- | --- | --- | --- |
-| `POST` | `/conversation-check/generate-casual-questions` | Generate five casual English assessment questions | JWT bearer token |
-| `POST` | `/conversation-check/check-conversation-test` | Check whether completed report count matches the user's assessment threshold | JWT bearer token |
-| `POST` | `/conversation-check/submit-conversation-test` | Assess a conversation and create/update the user's conversation-check record | JWT bearer token |
+| Method | Endpoint                                        | Purpose                                                                      | Authentication   |
+| ------ | ----------------------------------------------- | ---------------------------------------------------------------------------- | ---------------- |
+| `POST` | `/conversation-check/generate-casual-questions` | Generate five casual English assessment questions                            | JWT bearer token |
+| `POST` | `/conversation-check/check-conversation-test`   | Check whether completed report count matches the user's assessment threshold | JWT bearer token |
+| `POST` | `/conversation-check/submit-conversation-test`  | Assess a conversation and create/update the user's conversation-check record | JWT bearer token |
+| `POST` | `/conversation-check/test-digital-ocean`        | Test the configured DigitalOcean AI model                                    | JWT bearer token |
 
 **Base URL:** `{BASE_URL}` — for example, `http://localhost:3000`.
+
+AI question generation and assessment use the OpenAI Agents SDK configured
+against DigitalOcean's OpenAI-compatible inference API. See
+[`ai-configuration.md`](./ai-configuration.md) for the required settings.
 
 There is no global route prefix. All three endpoints require the access token:
 
@@ -23,9 +29,9 @@ Authorization: Bearer <accessToken>
 Content-Type: application/json
 ```
 
-All routes are `POST` routes and use Nest's default success status, `201 Created`.
-Send a JSON body only to `submit-conversation-test`; the other two endpoints do
-not require one.
+All routes are `POST` routes. They use Nest's default success status,
+`201 Created`, except `test-digital-ocean`, which returns `200 OK`. Send a JSON
+body only to `submit-conversation-test`; the other endpoints do not require one.
 
 ## Shared types
 
@@ -40,11 +46,11 @@ export interface ConversationMessage {
 
 export interface ConversationScores {
   sentenceFraming: number; // 0–5
-  vocabulary: number;      // 0–5
-  grammar: number;          // 0–5
-  fluency: number;          // 0–5
-  coherence: number;        // 0–5
-  confidence: number;       // 0–5
+  vocabulary: number; // 0–5
+  grammar: number; // 0–5
+  fluency: number; // 0–5
+  coherence: number; // 0–5
+  confidence: number; // 0–5
 }
 
 export interface UserConversationCheck {
@@ -59,8 +65,8 @@ export interface UserConversationCheck {
   strengths: string[];
   improvements: string[];
   assessedAt?: string; // ISO date
-  createdAt: string;   // ISO date
-  updatedAt: string;   // ISO date
+  createdAt: string; // ISO date
+  updatedAt: string; // ISO date
 }
 ```
 
@@ -144,10 +150,10 @@ strengths, and improvements. The result is saved in the authenticated user's
 
 Each message must contain:
 
-| Field | Type | Rules |
-| --- | --- | --- |
-| `role` | string | Required; either `"ai"` or `"user"` |
-| `message` | string | Required and non-empty |
+| Field     | Type   | Rules                               |
+| --------- | ------ | ----------------------------------- |
+| `role`    | string | Required; either `"ai"` or `"user"` |
+| `message` | string | Required and non-empty              |
 
 The `conversation` array must contain at least one message and at least one
 message with role `"user"`. Send messages in conversation order. The endpoint
@@ -241,6 +247,33 @@ record. The assessment threshold advances by seven for each successful
 submission. A newly created document starts with the schema default of `1`,
 then advances to `8` on its first submission.
 
+## 4. Test DigitalOcean AI connectivity
+
+### `POST /conversation-check/test-digital-ocean`
+
+Runs a short, fixed prompt through the configured OpenAI Agents SDK provider.
+This authenticated diagnostic endpoint requires no request body and returns
+the configured model name and its response. It returns `500 Internal Server
+Error` if DigitalOcean AI is not configured or the request fails.
+
+**Example request:**
+
+```http
+POST /conversation-check/test-digital-ocean
+Authorization: ******
+```
+
+**Example response (`200 OK`):**
+
+```json
+{
+  "success": true,
+  "provider": "DigitalOcean",
+  "model": "llama3.3-70b-instruct",
+  "response": "DigitalOcean AI is responding."
+}
+```
+
 ## Errors
 
 Errors use Nest's standard exception response format. Frontend clients should
@@ -262,8 +295,8 @@ use the HTTP status and `message` field to handle failures.
 The exact validation messages depend on which constraint failed. Other expected
 failure cases include:
 
-| Status | Cause |
-| --- | --- |
-| `400 Bad Request` | Invalid request shape, invalid message role, empty message, or no user response in the submitted conversation |
-| `401 Unauthorized` | Missing, invalid, or expired JWT |
-| `500 Internal Server Error` | OpenAI is not configured, AI assessment/question generation fails, or an AI response cannot be validated |
+| Status                      | Cause                                                                                                         |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `400 Bad Request`           | Invalid request shape, invalid message role, empty message, or no user response in the submitted conversation |
+| `401 Unauthorized`          | Missing, invalid, or expired JWT                                                                              |
+| `500 Internal Server Error` | OpenAI is not configured, AI assessment/question generation fails, or an AI response cannot be validated      |

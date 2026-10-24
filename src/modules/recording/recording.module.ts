@@ -23,10 +23,12 @@ import {
   UserConversationCheck,
   UserConversationCheckSchema,
 } from '@/database/schemas/userConversationCheck.schema';
+import { QueuesModule } from '@/queues/queues.module';
 
 @Module({
   imports: [
     FileModule,
+    QueuesModule,
     MongooseModule.forFeature([
       { name: ConversationTurn.name, schema: ConversationTurnSchema },
       { name: RolePlay.name, schema: RolePlaySchema },

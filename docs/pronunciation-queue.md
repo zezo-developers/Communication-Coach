@@ -1,0 +1,7 @@
+# Pronunciation feedback queue
+
+Pronunciation analysis runs asynchronously with BullMQ when a user audio turn is transcribed. The job sends the audio, transcript, and `lang=en` as `multipart/form-data` to `{PRONUNCIATION_API_BASE_URL}/fast/pronunciation`. Set `PRONUNCIATION_API_BASE_URL` to the Python service origin, for example `http://localhost:8000`. The endpoint must return a JSON object containing `feedback` and an `errors` array with `position`, `word`, `expected`, `actual`, and `confidence`; optional phoneme details are also passed to the explanation agent.
+
+The OpenAI Agents SDK, configured with the DigitalOcean provider, receives the Python analyzer response and creates readable overall feedback plus a practical explanation for each detected error. The stored pronunciation document contains the transcript, `language: "en-US"`, overall feedback, and per-error details. It is returned in the report detail response.
+
+The uploaded audio is included in the Redis job payload so the worker can analyze it asynchronously. After successful processing, the audio payload is cleared from the completed job data. Protect Redis as sensitive storage and configure `REDIS_URL` with a `redis://` or `rediss://` URL, or set `REDIS_HOST`, `REDIS_PORT`, `REDIS_USERNAME`, `REDIS_PASSWORD`, `REDIS_DB`, and `REDIS_TLS`. If both are set, the explicit `REDIS_HOST` settings take precedence. If unset, the application connects to `127.0.0.1:6379`.

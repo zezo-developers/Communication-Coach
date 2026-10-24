@@ -18,6 +18,10 @@ import {
   RolePlaySession,
   RolePlaySessionDocument,
 } from '@/database/schemas/rolePlaySession.schema';
+import {
+  Pronunciation,
+  PronunciationDocument,
+} from '@/database/schemas/pronunciation.schema';
 import { ListReportsDto } from '@/modules/recording/dto/list-reports.dto';
 
 @Injectable()
@@ -31,12 +35,16 @@ export class ReportService {
     private readonly conversationModel: Model<ConversationTurnDocument>,
     @InjectModel(RolePlaySession.name)
     private readonly sessionModel: Model<RolePlaySessionDocument>,
+    @InjectModel(Pronunciation.name)
+    private readonly pronunciationModel: Model<PronunciationDocument>,
   ) {}
 
   async listForUser(userId: string, dto: ListReportsDto) {
     // Match both ObjectId and string-stored userId for backward compatibility
     const userIdOr = [
-      Types.ObjectId.isValid(userId) ? { userId: new Types.ObjectId(userId) } : null,
+      Types.ObjectId.isValid(userId)
+        ? { userId: new Types.ObjectId(userId) }
+        : null,
       { userId },
     ].filter(Boolean) as any[];
 
@@ -49,7 +57,9 @@ export class ReportService {
       const sid = dto.sessionId;
       andFilters.push({
         $or: [
-          Types.ObjectId.isValid(sid) ? { sessionId: new Types.ObjectId(sid) } : null,
+          Types.ObjectId.isValid(sid)
+            ? { sessionId: new Types.ObjectId(sid) }
+            : null,
           { sessionId: sid },
         ].filter(Boolean),
       });
@@ -76,10 +86,14 @@ export class ReportService {
       const score: any = {};
       if (dto.minScore != null) score.$gte = dto.minScore;
       if (dto.maxScore != null) score.$lte = dto.maxScore;
-      andFilters.push({ $or: [{ overallScore: score }, { overallScore: { $exists: false } }] });
+      andFilters.push({
+        $or: [{ overallScore: score }, { overallScore: { $exists: false } }],
+      });
     }
 
-    const finalQuery = andFilters.length ? { $and: [base, ...andFilters] } : base;
+    const finalQuery = andFilters.length
+      ? { $and: [base, ...andFilters] }
+      : base;
 
     const page = dto.page ?? 1;
     const limit = dto.limit ?? 20;
@@ -123,7 +137,7 @@ export class ReportService {
       );
     }
 
-    const [feedback, session, turns] = await Promise.all([
+    const [feedback, session, turns, pronunciation] = await Promise.all([
       this.feedbackModel.findOne({ reportId: report._id }).lean().exec(),
       this.sessionModel.findById(report.sessionId).lean().exec(),
       this.conversationModel
@@ -131,11 +145,17 @@ export class ReportService {
         .sort({ sequence: 1, createdAt: 1 })
         .lean()
         .exec(),
+      this.pronunciationModel
+        .find({ reportId: report._id })
+        .sort({ createdAt: 1 })
+        .lean()
+        .exec(),
     ]);
 
     return {
       report,
       feedback,
+      pronunciation,
       conversation: {
         sessionId: report.sessionId,
         session,

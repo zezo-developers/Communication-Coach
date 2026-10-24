@@ -6,8 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import OpenAI from 'openai';
-import { toFile } from 'openai/uploads';
+import { GoogleGenAI } from '@google/genai';
 import { Agent, run } from '@openai/agents';
 import { S3Service } from '@/modules/file/services/s3.service';
 import { CompletedRecordingPartDto } from '../dto/recording-upload.dto';
@@ -36,11 +35,18 @@ import {
   UserConversationCheck,
   UserConversationCheckDocument,
 } from '@/database/schemas/userConversationCheck.schema';
+import {
+  configureDigitalOceanAgent,
+  getDigitalOceanBaseURL,
+} from '@/common/ai/digitalocean-agent.config';
+import { PronunciationQueueService } from '@/queues/services/pronunciation.queue.service';
+import { EnhancedConversationDto } from '../dto/enhanced-conversation.dto';
+import { getReportAnalysisSchema } from '../zod/report-analysis.schema';
+import { getEnhancedConversationSchema } from '../zod/enhanced-conversation.schema';
 
 @Injectable()
 export class RecordingService {
   private readonly logger = new Logger(RecordingService.name);
-  private readonly openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   constructor(
     @InjectModel(ConversationTurn.name)
@@ -56,12 +62,17 @@ export class RecordingService {
     @InjectModel(ReportFeedback.name)
     private readonly reportFeedbackModel: Model<ReportFeedbackDocument>,
     private readonly s3Service: S3Service,
+    private readonly pronunciationQueueService: PronunciationQueueService,
   ) {}
 
-  private assertOpenAIConfigured(): void {
-    if (!process.env.OPENAI_API_KEY) {
+  private configureDigitalOcean(): string {
+    try {
+      return configureDigitalOceanAgent();
+    } catch (error) {
       throw new InternalServerErrorException(
-        'OpenAI is not configured on the server',
+        error instanceof Error
+          ? error.message
+          : 'DigitalOcean AI is not configured on the server',
       );
     }
   }
@@ -111,8 +122,11 @@ export class RecordingService {
   ): { voice: string; language: string; style: string } {
     const persona = (rolePlay as any).aiPersona ?? {};
     const config = persona.voiceConfig ?? {};
+    const configuredVoice = requestedVoice || config.voice;
     return {
-      voice: String(requestedVoice || config.voice || 'nova'),
+      voice: String(
+        configuredVoice === 'nova' ? 'alloy' : configuredVoice || 'alloy',
+      ),
       language: String(config.language || 'en-US'),
       style: String(config.style || 'friendly'),
     };
@@ -147,23 +161,106 @@ export class RecordingService {
     }
   }
 
-  /** Generates real MP3 audio using OpenAI TTS. */
+  /** Generates MP3 audio through DigitalOcean's audio inference endpoint. */
   private async generateAudioDataUrl(
     text: string,
     voice: string,
     language: string,
     style: string,
   ): Promise<string> {
-    this.assertOpenAIConfigured();
-    const speech = await this.openai.audio.speech.create({
-      model: 'gpt-4o-mini-tts',
-      voice,
-      input: text,
-      instructions: `Speak in ${language} with a ${style} tone.`,
-      response_format: 'mp3',
+    this.configureDigitalOcean();
+    const apiKey = process.env.DIGITALOCEAN_API_KEY;
+    if (!apiKey) {
+      throw new InternalServerErrorException(
+        'DIGITALOCEAN_API_KEY is not configured',
+      );
+    }
+
+    const baseUrl = getDigitalOceanBaseURL().replace(/\/+$/, '');
+    const apiBaseUrl = /\/v1$/i.test(baseUrl) ? baseUrl : `${baseUrl}/v1`;
+    const response = await fetch(`${apiBaseUrl}/audio/speech`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        Accept: 'audio/mpeg, application/json',
+      },
+      body: JSON.stringify({
+        model: process.env.DIGITALOCEAN_TTS_MODEL || 'qwen3-tts-voicedesign',
+        input: text,
+        voice,
+        response_format: 'mp3',
+        instructions: `Speak naturally and clearly in ${language} with a ${style} tone.`,
+      }),
+      signal: AbortSignal.timeout(120_000),
     });
-    const bytes = Buffer.from(await speech.arrayBuffer());
+
+    const contentType = response.headers.get('content-type') || '';
+    const responseBytes = Buffer.from(await response.arrayBuffer());
+    if (!response.ok) {
+      const errorBody = responseBytes.toString('utf8').slice(0, 1000);
+      throw new Error(
+        `DigitalOcean TTS request failed (${response.status}): ${errorBody}`,
+      );
+    }
+    if (!responseBytes.length) {
+      throw new Error('DigitalOcean TTS returned an empty response');
+    }
+
+    let audioBytes: Buffer | undefined;
+    if (contentType.includes('application/json')) {
+      let payload: unknown;
+      try {
+        payload = JSON.parse(responseBytes.toString('utf8'));
+      } catch {
+        throw new Error('DigitalOcean TTS returned invalid JSON');
+      }
+
+      if (typeof payload === 'string') {
+        audioBytes = this.decodeBase64Audio(payload);
+      } else if (
+        payload &&
+        typeof payload === 'object' &&
+        'data' in payload &&
+        Array.isArray(payload.data)
+      ) {
+        const firstResult = payload.data[0];
+        if (
+          firstResult &&
+          typeof firstResult === 'object' &&
+          'b64_json' in firstResult &&
+          typeof firstResult.b64_json === 'string'
+        ) {
+          audioBytes = this.decodeBase64Audio(firstResult.b64_json);
+        }
+      }
+    } else if (
+      contentType.startsWith('audio/') ||
+      contentType.includes('application/octet-stream')
+    ) {
+      audioBytes = responseBytes;
+    } else {
+      audioBytes = this.decodeBase64Audio(responseBytes.toString('utf8'));
+    }
+
+    if (!audioBytes?.length) {
+      throw new Error(
+        'DigitalOcean TTS returned an unexpected response format',
+      );
+    }
+
+    const bytes = audioBytes;
     return `data:audio/mpeg;base64,${bytes.toString('base64')}`;
+  }
+
+  private decodeBase64Audio(value: string): Buffer | undefined {
+    const base64 = value.trim();
+    if (!base64 || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) {
+      return undefined;
+    }
+
+    const bytes = Buffer.from(base64, 'base64');
+    return bytes.length ? bytes : undefined;
   }
 
   /**
@@ -182,7 +279,7 @@ export class RecordingService {
     audioUrl: string;
     voiceConfig: { voice: string; language: string; style: string };
   }> {
-    this.assertOpenAIConfigured();
+    const model = this.configureDigitalOcean();
     if (!Types.ObjectId.isValid(rolePlayId)) {
       throw new BadRequestException('Invalid roleplay id');
     }
@@ -231,7 +328,7 @@ export class RecordingService {
 
     const questionAgent = new Agent({
       name: 'Communication Roleplay Interviewer',
-      model: 'gpt-4o-mini',
+      model,
 
       instructions: [
         'You are a realistic spoken communication roleplay interviewer.',
@@ -295,16 +392,8 @@ export class RecordingService {
       .replace(/^['"\s]+|['"\s]+$/g, '');
     if (!questionText)
       throw new InternalServerErrorException(
-        'OpenAI did not return a question',
+        'DigitalOcean AI did not return a question',
       );
-
-    const sequence = await this.nextSequenceForSession(session._id);
-    const created = await this.conversationModel.create({
-      sessionId: session._id,
-      speaker: ConversationSpeaker.AI,
-      sequence,
-      text: questionText,
-    } as Partial<ConversationTurn>);
 
     const voiceConfig = this.getVoiceConfig(rolePlay);
     let audioUrl: string;
@@ -321,9 +410,17 @@ export class RecordingService {
         error instanceof Error ? error.stack : String(error),
       );
       throw new InternalServerErrorException(
-        'The question was saved, but audio generation failed. Please try again later.',
+        'Audio generation failed. Please try again later.',
       );
     }
+
+    const sequence = await this.nextSequenceForSession(session._id);
+    const created = await this.conversationModel.create({
+      sessionId: session._id,
+      speaker: ConversationSpeaker.AI,
+      sequence,
+      text: questionText,
+    } as Partial<ConversationTurn>);
 
     return {
       text: questionText,
@@ -517,20 +614,69 @@ export class RecordingService {
     if (!audioBuffer?.length) {
       throw new BadRequestException('Provide a non-empty audio recording.');
     }
+    if (audioBuffer.length > 10 * 1024 * 1024) {
+      throw new BadRequestException(
+        'Google Gemini accepts inline audio up to 10 MB.',
+      );
+    }
 
-    this.assertOpenAIConfigured();
-    const audioFile = await toFile(audioBuffer, originalName, {
-      type: mimeType,
-    });
-    const transcription = await this.openai.audio.transcriptions.create({
-      file: audioFile,
-      model: 'gpt-4o-mini-transcribe',
-      // Optional: set language: 'en' when the app only supports English.
-    });
-    const transcriptText = transcription.text.trim();
+    const apiKey = process.env.GOOGLE_GEMINI_API;
+    if (!apiKey) {
+      throw new InternalServerErrorException(
+        'Google Gemini is not configured on the server.',
+      );
+    }
+
+    let transcriptText: string;
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.5-transcribe',
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                inlineData: {
+                  mimeType,
+                  data: audioBuffer.toString('base64'),
+                },
+              },
+              { text: 'Transcribe the audio and return only the transcript.' },
+            ],
+          },
+        ],
+      });
+      const responseParts =
+        response.candidates?.flatMap(
+          (candidate) => candidate.content?.parts ?? [],
+        ) ?? [];
+      const audioTranscript = responseParts
+        .map((part) => part.audioTranscription?.text)
+        .filter((text): text is string => Boolean(text?.trim()))
+        .join(' ')
+        .trim();
+      transcriptText =
+        audioTranscript ||
+        responseParts
+          .map((part) => part.text ?? '')
+          .filter(Boolean)
+          .join(' ')
+          .trim();
+    } catch (error) {
+      this.logger.error(
+        'Google Gemini transcription failed',
+        error instanceof Error ? error.stack : String(error),
+      );
+      throw new InternalServerErrorException(
+        'Audio transcription failed. Please try again later.',
+      );
+    }
 
     if (!transcriptText) {
-      throw new BadRequestException('Audio transcription returned empty text.');
+      throw new BadRequestException(
+        'Google Gemini did not recognize any speech in the audio.',
+      );
     }
 
     const sequence = await this.nextSequenceForSession(session._id);
@@ -541,6 +687,16 @@ export class RecordingService {
       text: transcriptText,
       wordCount: transcriptText.split(/\s+/).filter(Boolean).length,
     } as Partial<ConversationTurn>);
+
+    await this.pronunciationQueueService.analyzeTurn({
+      sessionId: String(session._id),
+      userId: String(session.userId),
+      turnId: String(created._id),
+      transcript: transcriptText,
+      audioBase64: audioBuffer.toString('base64'),
+      audioMimeType: mimeType,
+      audioFileName: originalName,
+    });
 
     return {
       text: transcriptText,
@@ -557,7 +713,7 @@ export class RecordingService {
     userId: string,
     sessionId: string,
   ): Promise<{ report: ReportDocument; feedback: ReportFeedbackDocument }> {
-    this.assertOpenAIConfigured();
+    const model = this.configureDigitalOcean();
     if (!Types.ObjectId.isValid(sessionId))
       throw new BadRequestException('Invalid session id');
 
@@ -610,12 +766,10 @@ export class RecordingService {
 
     let analysis: any;
     try {
-      const { getReportAnalysisSchema } =
-        await import('../zod/report-analysis.schema.js');
       const schema = await getReportAnalysisSchema();
       const reportAgent = new Agent({
         name: 'Communication Skills Report Evaluator',
-        model: 'gpt-4o-mini',
+        model,
         instructions: [
           'Evaluate a communication roleplay based only on the supplied transcript and scenario.',
           'Give evidence-based scores from 0 to 5. Do not invent details not present in the transcript.',
@@ -662,7 +816,7 @@ export class RecordingService {
       status: ReportStatus.COMPLETED,
       overallScore: analysis.overallScore,
       summary: analysis.summary,
-      model: 'gpt-4o-mini',
+      model,
       promptVersion: 'communication-report-agent-v1',
     };
     if (recordingUrl) {
@@ -708,5 +862,116 @@ export class RecordingService {
       .exec();
 
     return { report, feedback };
+  }
+
+  /**
+   * POST /recording/enhanced-conversation
+   * Generates and saves a natural rewrite and vocabulary suggestions for a user turn.
+   */
+  async enhancedConversation(userId: string, dto: EnhancedConversationDto) {
+    if (!Types.ObjectId.isValid(dto.conversationTurnId)) {
+      throw new BadRequestException('Invalid conversation turn id');
+    }
+
+    const userTurn = await this.conversationModel
+      .findById(new Types.ObjectId(dto.conversationTurnId))
+      .exec();
+    if (!userTurn) {
+      throw new BadRequestException('Conversation turn not found');
+    }
+    if (userTurn.speaker !== ConversationSpeaker.USER) {
+      throw new BadRequestException(
+        'Only user conversation turns can be enhanced',
+      );
+    }
+
+    const session = await this.getOwnedSession(
+      userId,
+      String(userTurn.sessionId),
+    );
+    const previousAiTurn = await this.conversationModel
+      .findOne({
+        sessionId: session._id,
+        speaker: ConversationSpeaker.AI,
+        sequence: { $lt: userTurn.sequence },
+      })
+      .sort({ sequence: -1, createdAt: -1 })
+      .lean()
+      .exec();
+    if (!previousAiTurn) {
+      throw new BadRequestException(
+        'No preceding AI question was found for this user turn',
+      );
+    }
+
+    const model = this.configureDigitalOcean();
+    let enhancedTurn: ReturnType<
+      Awaited<ReturnType<typeof getEnhancedConversationSchema>>['parse']
+    >;
+    try {
+      const schema = await getEnhancedConversationSchema();
+      const enhancementAgent = new Agent({
+        name: 'User Conversation Enhancer',
+        model,
+        instructions: [
+          'You are a supportive English communication coach helping a learner improve one answer in a roleplay conversation.',
+          'Use the previous AI question only to understand what the learner was responding to. Rewrite only the supplied user answer.',
+          'I want you to strictly do not change the user sentence, just rewrite how a natural  native speaker would say this same sentence.',
+          'Suggest a small number of useful vocabulary alternatives only when they genuinely help the learner express the same idea more naturally or precisely. It is acceptable to return an empty vocabularyItems array.',
+          'For each vocabulary item, provide the word or phrase, a simple learner-friendly meaning, and an exampleWordInSentence showing how to use it in the enhanced sentence or a natural variation of it.',
+          'Return all required fields in the provided structured output schema.',
+        ].join(' '),
+        outputType: schema,
+      });
+      const result = await run(
+        enhancementAgent,
+        JSON.stringify({
+          previousAiQuestion: previousAiTurn.text,
+          userAnswer: userTurn.text,
+          requirements: {
+            preserveOriginalMeaning: true,
+            naturalSentence:
+              'Native-sounding English in response to the question',
+            vocabularyItems:
+              'Optional useful vocabulary with simple meanings and contextual examples',
+          },
+        }),
+      );
+      const output =
+        typeof result.finalOutput === 'string'
+          ? JSON.parse(result.finalOutput)
+          : result.finalOutput;
+      enhancedTurn = schema.parse(output);
+    } catch (error) {
+      this.logger.error(
+        'Enhanced conversation agent failed',
+        error instanceof Error ? error.stack : String(error),
+      );
+      throw new InternalServerErrorException(
+        'Could not enhance the conversation. Please try again.',
+      );
+    }
+
+    const updatedTurn = await this.conversationModel
+      .findOneAndUpdate(
+        {
+          _id: userTurn._id,
+          sessionId: session._id,
+          speaker: ConversationSpeaker.USER,
+        },
+        { $set: { enhancedTurn } },
+        { new: true, runValidators: true },
+      )
+      .exec();
+    if (!updatedTurn) {
+      throw new BadRequestException('Conversation turn could not be updated');
+    }
+
+    return {
+      conversationTurnId: String(updatedTurn._id),
+      previousAiQuestion: previousAiTurn.text,
+      originalSentence: updatedTurn.text,
+      enhancedTurn: updatedTurn.enhancedTurn,
+    };
   }
 }

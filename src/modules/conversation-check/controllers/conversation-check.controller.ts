@@ -2,18 +2,28 @@ import {
   BadRequestException,
   Body,
   Controller,
+  HttpCode,
+  HttpStatus,
   Post,
   Req,
   UseGuards,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiInternalServerErrorResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from '@/modules/auth/guards/jwt-auth.guard';
 import { AuthenticatedUser } from '@/modules/auth/strategies/jwt.strategy';
 import { UserConversationCheckDocument } from '@/database/schemas/userConversationCheck.schema';
 import { SubmitConversationTestDto } from '../dto/submit-conversation-test.dto';
 import { ConversationCheckService } from '../services/conversation-check.service';
+import { DigitalOceanService } from '../services/digitalocean.service';
 
 @ApiTags('Conversation Check')
 @ApiBearerAuth('JWT-auth')
@@ -29,6 +39,7 @@ import { ConversationCheckService } from '../services/conversation-check.service
 export class ConversationCheckController {
   constructor(
     private readonly conversationCheckService: ConversationCheckService,
+    private readonly digitalOceanService: DigitalOceanService,
   ) {}
 
   private getAuthenticatedUserId(req: {
@@ -80,5 +91,31 @@ export class ConversationCheckController {
       this.getAuthenticatedUserId(req),
       dto.conversation,
     );
+  }
+
+  @Post('test-digital-ocean')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Test DigitalOcean AI connectivity',
+    description:
+      'Runs a short request through the configured OpenAI Agents SDK provider and returns the model response.',
+  })
+  @ApiOkResponse({
+    description: 'DigitalOcean AI returned a response successfully.',
+    schema: {
+      example: {
+        success: true,
+        provider: 'DigitalOcean',
+        model: 'llama3.3-70b-instruct',
+        response: 'DigitalOcean AI is responding.',
+      },
+    },
+  })
+  @ApiInternalServerErrorResponse({
+    description:
+      'DigitalOcean AI is not configured, unavailable, or returned an invalid response.',
+  })
+  testDigitalOcean() {
+    return this.digitalOceanService.testModel('hi');
   }
 }

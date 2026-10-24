@@ -7,6 +7,7 @@ import {
 } from '@/database/schemas/userConversationCheck.schema';
 import { ConversationCheckController } from './controllers/conversation-check.controller';
 import { ConversationCheckService } from './services/conversation-check.service';
+import { DigitalOceanService } from './services/digitalocean.service';
 
 @Module({
   imports: [
@@ -15,7 +16,7 @@ import { ConversationCheckService } from './services/conversation-check.service'
       { name: Report.name, schema: ReportSchema },
     ]),
   ],
-  providers: [ConversationCheckService],
+  providers: [ConversationCheckService, DigitalOceanService],
   controllers: [ConversationCheckController],
 })
 export class ConversationCheckModule {}

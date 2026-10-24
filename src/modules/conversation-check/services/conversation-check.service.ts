@@ -18,6 +18,7 @@ import {
   UserConversationCheckDocument,
   UserConversationCheckStatus,
 } from '@/database/schemas/userConversationCheck.schema';
+import { configureDigitalOceanAgent } from '@/common/ai/digitalocean-agent.config';
 import { SubmitConversationMessageDto } from '../dto/submit-conversation-test.dto';
 import { ConversationAssessment } from '../zod/conversation-assessment.schema';
 
@@ -32,20 +33,21 @@ export class ConversationCheckService {
     private readonly reportModel: Model<ReportDocument>,
   ) {}
 
-  private assertOpenAIConfigured(): void {
-    if (!process.env.OPENAI_API_KEY) {
+  async generateCasualQuestions(): Promise<{ questions: string[] }> {
+    let model: string;
+    try {
+      model = configureDigitalOceanAgent();
+    } catch (error) {
       throw new InternalServerErrorException(
-        'OpenAI is not configured on the server',
+        error instanceof Error
+          ? error.message
+          : 'DigitalOcean AI is not configured on the server',
       );
     }
-  }
-
-  async generateCasualQuestions(): Promise<{ questions: string[] }> {
-    this.assertOpenAIConfigured();
 
     const questionAgent = new Agent({
       name: 'English Conversation Level Assessor',
-      model: 'gpt-4o-mini',
+      model,
       instructions: [
         'Create exactly five short, casual questions for a friendly conversation.',
         "The questions should help assess the user's English vocabulary, grammar, sentence framing, and fluency across a range of ability levels.",
@@ -61,7 +63,7 @@ export class ConversationCheckService {
       parsedQuestions = JSON.parse(finalOutput);
     } catch {
       throw new InternalServerErrorException(
-        'OpenAI returned questions in an invalid format',
+        'DigitalOcean AI returned questions in an invalid format',
       );
     }
 
@@ -73,7 +75,7 @@ export class ConversationCheckService {
       )
     ) {
       throw new InternalServerErrorException(
-        'OpenAI did not return exactly five valid questions',
+        'DigitalOcean AI did not return exactly five valid questions',
       );
     }
 
@@ -148,7 +150,16 @@ export class ConversationCheckService {
       );
     }
 
-    this.assertOpenAIConfigured();
+    let model: string;
+    try {
+      model = configureDigitalOceanAgent();
+    } catch (error) {
+      throw new InternalServerErrorException(
+        error instanceof Error
+          ? error.message
+          : 'DigitalOcean AI is not configured on the server',
+      );
+    }
 
     let assessment: ConversationAssessment;
     try {
@@ -157,7 +168,7 @@ export class ConversationCheckService {
       const schema = await getConversationAssessmentSchema();
       const assessmentAgent = new Agent({
         name: 'English Conversation Assessment',
-        model: 'gpt-4o-mini',
+        model,
         instructions: [
           'Assess the user’s English communication ability using only the supplied conversation.',
           'Evaluate the user messages; use AI messages only to understand the questions and context.',
